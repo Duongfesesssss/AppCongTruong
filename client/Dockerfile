@@ -14,14 +14,10 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 
-# Receive build arg
-ARG NUXT_PUBLIC_API_BASE
-ENV NUXT_PUBLIC_API_BASE=${NUXT_PUBLIC_API_BASE}
-
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build with production environment
+# Build with production environment (build with default, runtime will override)
 ENV NODE_ENV=production
 RUN npm run build
 
@@ -34,6 +30,10 @@ ENV NODE_ENV=production
 # Copy necessary files
 COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/package.json ./package.json
+
+# Create symlink for static files (fix Nuxt looking in wrong location)
+RUN mkdir -p /app/.output/server/chunks && \
+    ln -sf /app/.output/public /app/.output/server/chunks/public
 
 # Expose port
 EXPOSE 3000

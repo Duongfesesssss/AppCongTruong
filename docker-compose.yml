@@ -39,7 +39,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET}
-      STORAGE_TYPE: s3
+      STORAGE_TYPE: ${STORAGE_TYPE:-local}
     volumes:
       - server_uploads:/app/uploads
     depends_on:
@@ -52,8 +52,6 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-      args:
-        NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE}
     container_name: appcongtruong-client
     restart: unless-stopped
     ports:
