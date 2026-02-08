@@ -40,6 +40,7 @@
       class="relative overflow-hidden bg-slate-50"
       style="touch-action: none"
       :class="placingPin ? 'h-[50vh] sm:h-[65vh]' : 'h-[55vh] sm:h-[70vh]'"
+      @pointerdown="handleViewportPointerDown"
       @pointerup="handlePointerUp"
       @pointerleave="handlePointerUp"
       @pointermove="handlePointerMove"
@@ -93,7 +94,7 @@
             <div
               v-for="pin in pins"
               :key="pin._id || pin.id"
-              class="pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 font-bold text-white shadow-lg transition-all duration-100"
+              class="pin-element pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 font-bold text-white shadow-lg transition-all duration-100"
               :class="[
                 'h-6 w-6 text-[9px] sm:h-5 sm:w-5 sm:text-[8px]',
                 pinBg(pin.status),
@@ -234,6 +235,19 @@ const startPan = (event: PointerEvent) => {
   panStart.y = event.clientY;
   panOrigin.x = offset.x;
   panOrigin.y = offset.y;
+};
+
+// Handler cho viewport-level pointerdown - bắt tất cả clicks
+const handleViewportPointerDown = (event: PointerEvent) => {
+  // Nếu đang placing pin hoặc đang kéo pin, không pan
+  if (placingPin.value || draggingPinId.value) return;
+
+  // Kiểm tra xem có click vào pin hoặc button không - nếu có thì return để event đó xử lý
+  const target = event.target as HTMLElement;
+  if (target.closest('.pin-element') || target.closest('button')) return;
+
+  // Bắt đầu pan
+  startPan(event);
 };
 
 // pointermove đặt ở viewport (bên ngoài content transform)

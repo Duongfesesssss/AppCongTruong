@@ -308,7 +308,7 @@ const handlePhotoUpload = async (e: Event) => {
 };
 
 const getPhotoUrl = (photo: any) => {
-  const base = `${config.public.apiBase}/api/photos/${photo._id}/file`;
+  const base = `${config.public.apiBase}/photos/${photo._id}/file`;
   return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
 };
 
@@ -320,7 +320,7 @@ const exportExcel = async () => {
       return;
     }
 
-    const url = new URL(`${config.public.apiBase}/api/reports/export-excel`);
+    const url = new URL(`${config.public.apiBase}/reports/export-excel`);
 
     // Export theo task hiện tại (tất cả photos của task)
     // Có thể mở rộng thành filter theo project/date range sau
