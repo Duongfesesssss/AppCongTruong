@@ -320,7 +320,11 @@ const exportExcel = async () => {
       return;
     }
 
-    const url = new URL(`${config.public.apiBase}/reports/export-excel`);
+    // Build absolute URL
+    const baseUrl = config.public.apiBase.startsWith('http')
+      ? config.public.apiBase
+      : `${window.location.origin}${config.public.apiBase}`;
+    const url = new URL(`${baseUrl}/reports/export-excel`);
 
     // Export theo task hiện tại (tất cả photos của task)
     // Có thể mở rộng thành filter theo project/date range sau

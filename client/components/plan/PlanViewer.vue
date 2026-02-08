@@ -240,7 +240,7 @@ const startPan = (event: PointerEvent) => {
 // Handler cho viewport-level pointerdown - bắt tất cả clicks
 const handleViewportPointerDown = (event: PointerEvent) => {
   // Nếu đang placing pin hoặc đang kéo pin, không pan
-  if (placingPin.value || draggingPinId.value) return;
+  if (props.placingPin || draggingPinId.value) return;
 
   // Kiểm tra xem có click vào pin hoặc button không - nếu có thì return để event đó xử lý
   const target = event.target as HTMLElement;
