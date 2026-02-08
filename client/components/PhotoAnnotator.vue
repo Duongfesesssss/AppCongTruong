@@ -217,6 +217,7 @@
 import { useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import { useAnnotationHistory } from "~/composables/state/useAnnotationHistory";
+import * as XLSX from "xlsx";
 
 type Line = {
   // === Tọa độ vẽ ===
@@ -284,6 +285,9 @@ const currentPoint = ref<{ x: number; y: number } | null>(null);
 // Dragging state (for moving selected line)
 const dragging = ref(false);
 const dragStart = ref<{ x: number; y: number } | null>(null);
+
+// Endpoint dragging state
+const draggingEndpoint = ref<{ lineIndex: number; endpoint: 'start' | 'end' } | null>(null);
 
 // Color and width options
 const COLORS = [
@@ -491,12 +495,28 @@ const drawLine = (context: CanvasRenderingContext2D, line: Line, isSelected: boo
   context.stroke();
 
   // End points
+  const endpointRadius = isSelected ? 8 : 6;
   context.fillStyle = lineColor;
+
+  // Draw endpoints with outline if selected
+  if (isSelected) {
+    // Outline
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(line.x1, line.y1, endpointRadius, 0, Math.PI * 2);
+    context.stroke();
+    context.beginPath();
+    context.arc(line.x2, line.y2, endpointRadius, 0, Math.PI * 2);
+    context.stroke();
+  }
+
+  // Fill
   context.beginPath();
-  context.arc(line.x1, line.y1, 6, 0, Math.PI * 2);
+  context.arc(line.x1, line.y1, endpointRadius, 0, Math.PI * 2);
   context.fill();
   context.beginPath();
-  context.arc(line.x2, line.y2, 6, 0, Math.PI * 2);
+  context.arc(line.x2, line.y2, endpointRadius, 0, Math.PI * 2);
   context.fill();
 
   // Distance label - only show if there's a name or realDistance
@@ -595,6 +615,33 @@ const findLineAt = (point: { x: number; y: number }) => {
   return null;
 };
 
+// Find which endpoint is being clicked (returns {lineIndex, endpoint: 'start'|'end'})
+const findEndpointAt = (point: { x: number; y: number }): { lineIndex: number; endpoint: 'start' | 'end' } | null => {
+  const threshold = 20; // Larger threshold for endpoints
+
+  for (let i = lines.value.length - 1; i >= 0; i--) {
+    const line = lines.value[i];
+
+    // Check distance to start point
+    const distToStart = Math.sqrt(
+      Math.pow(point.x - line.x1, 2) + Math.pow(point.y - line.y1, 2)
+    );
+    if (distToStart < threshold) {
+      return { lineIndex: i, endpoint: 'start' };
+    }
+
+    // Check distance to end point
+    const distToEnd = Math.sqrt(
+      Math.pow(point.x - line.x2, 2) + Math.pow(point.y - line.y2, 2)
+    );
+    if (distToEnd < threshold) {
+      return { lineIndex: i, endpoint: 'end' };
+    }
+  }
+
+  return null;
+};
+
 const distanceToLine = (point: { x: number; y: number }, line: Line) => {
   const A = point.x - line.x1;
   const B = point.y - line.y1;
@@ -644,6 +691,16 @@ const handlePointerDown = (e: PointerEvent) => {
     startPoint.value = coords;
     currentPoint.value = coords;
   } else if (mode.value === "select") {
+    // Check for endpoint click first (higher priority)
+    const endpoint = findEndpointAt(coords);
+    if (endpoint !== null) {
+      selectedLine.value = endpoint.lineIndex;
+      draggingEndpoint.value = endpoint;
+      draw();
+      return;
+    }
+
+    // Then check for line click
     const lineIndex = findLineAt(coords);
     if (lineIndex !== null) {
       selectedLine.value = lineIndex;
@@ -676,18 +733,44 @@ const handlePointerMove = (e: PointerEvent) => {
   if (mode.value === "draw" && drawing.value) {
     currentPoint.value = coords;
     draw();
-  } else if (mode.value === "select" && dragging.value && selectedLine.value !== null && dragStart.value) {
-    const dx = coords.x - dragStart.value.x;
-    const dy = coords.y - dragStart.value.y;
+  } else if (mode.value === "select") {
+    // Handle endpoint dragging
+    if (draggingEndpoint.value !== null) {
+      const { lineIndex, endpoint } = draggingEndpoint.value;
+      const line = lines.value[lineIndex];
 
-    const line = lines.value[selectedLine.value];
-    line.x1 += dx;
-    line.y1 += dy;
-    line.x2 += dx;
-    line.y2 += dy;
+      if (endpoint === 'start') {
+        line.x1 = coords.x;
+        line.y1 = coords.y;
+      } else {
+        line.x2 = coords.x;
+        line.y2 = coords.y;
+      }
 
-    dragStart.value = coords;
-    draw();
+      // Recalculate distance and scale
+      line.distance = Math.sqrt(
+        Math.pow(line.x2 - line.x1, 2) + Math.pow(line.y2 - line.y1, 2)
+      );
+      if (line.realValue && line.distance) {
+        line.scale = line.realValue / line.distance;
+      }
+
+      draw();
+    }
+    // Handle whole line dragging
+    else if (dragging.value && selectedLine.value !== null && dragStart.value) {
+      const dx = coords.x - dragStart.value.x;
+      const dy = coords.y - dragStart.value.y;
+
+      const line = lines.value[selectedLine.value];
+      line.x1 += dx;
+      line.y1 += dy;
+      line.x2 += dx;
+      line.y2 += dy;
+
+      dragStart.value = coords;
+      draw();
+    }
   }
 };
 
@@ -727,6 +810,7 @@ const handlePointerUp = () => {
 
   drawing.value = false;
   dragging.value = false;
+  draggingEndpoint.value = null;
   startPoint.value = null;
   currentPoint.value = null;
   dragStart.value = null;
@@ -810,8 +894,6 @@ const triggerImport = () => {
 
 const downloadExcelTemplate = () => {
   // Tạo file Excel mẫu với SheetJS
-  const XLSX = (window as any).XLSX || require('xlsx');
-
   // Dữ liệu mẫu
   const templateData = [
     {

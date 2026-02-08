@@ -54,17 +54,18 @@
       <div
         v-else
         class="h-full w-full"
-        :class="placingPin ? 'cursor-crosshair' : draggingPinId ? 'cursor-grabbing' : 'cursor-grab'"
+        :class="placingPin ? 'cursor-crosshair' : 'cursor-default'"
       >
         <div ref="contentRef" class="relative" :style="transformStyle">
-          <!-- Dùng object thay iframe: height tự động theo nội dung PDF
-               min-height đảm bảo có đủ chiều cao để scroll xem full PDF -->
+          <!-- Dùng object thay iframe: height tự động theo nội dung PDF -->
           <object
+            ref="pdfObjectRef"
             :data="fileUrl"
             type="application/pdf"
             class="pointer-events-none w-full"
-            style="min-height: 200vh; height: auto;"
+            style="min-height: 500vh; height: auto;"
             aria-label="Bản vẽ"
+            @load="syncOverlayHeight"
           >
             <p class="p-4 text-sm text-slate-500">
               Trình duyệt không hỗ trợ xem PDF.
@@ -72,19 +73,22 @@
             </p>
           </object>
 
-          <!-- Overlay: pins, zones, placement catcher - phải match height với PDF -->
+          <!-- Overlay: pins, zones, placement catcher - height sync với PDF qua JS -->
           <div
             ref="overlayRef"
-            class="absolute inset-x-0 top-0 pointer-events-auto"
-            style="min-height: 200vh; height: auto;"
-            :class="placingPin ? 'z-10' : ''"
+            class="absolute inset-0"
+            :class="[
+              placingPin || draggingPinId ? 'pointer-events-auto z-10' : 'pointer-events-none',
+              placingPin && 'cursor-crosshair',
+              draggingPinId && 'cursor-grabbing'
+            ]"
+            :style="overlayStyle"
             @click.self="handleOverlayClick"
             @mousemove.self="updateGhostPin"
             @mouseleave="ghostPin = null"
-            @pointerdown="handleViewportPointerDown"
+            @pointermove="handlePointerMove"
             @pointerup="handlePointerUp"
             @pointerleave="handlePointerUp"
-            @pointermove="handlePointerMove"
           >
             <!-- Ghost pin -->
             <div
@@ -175,6 +179,7 @@ const emit = defineEmits<{
 const viewportRef = ref<HTMLElement | null>(null);
 const contentRef = ref<HTMLElement | null>(null);
 const overlayRef = ref<HTMLElement | null>(null);
+const pdfObjectRef = ref<HTMLObjectElement | null>(null);
 
 // Zoom & pan
 const zoom = ref(1);
@@ -191,6 +196,9 @@ const pinDragMoved = ref(false);
 
 // Ghost pin khi đang placement
 const ghostPin = ref<{ x: number; y: number } | null>(null);
+
+// Overlay height sync với PDF
+const overlayHeight = ref<number>(0);
 
 // Computed
 const drawingTitle = computed(() => props.drawing?.name || "Chưa chọn bản vẽ");
@@ -209,6 +217,10 @@ const transformStyle = computed(() => ({
   // PDF có zoom native riêng, không cần CSS scale
   transform: `translate(${offset.x}px, ${offset.y}px)`,
   transformOrigin: "top left"
+}));
+
+const overlayStyle = computed(() => ({
+  height: overlayHeight.value > 0 ? `${overlayHeight.value}px` : '100vh'
 }));
 
 const clamp = (v: number) => Math.min(Math.max(v, 0), 1);
@@ -246,17 +258,12 @@ const startPan = (event: PointerEvent) => {
   panOrigin.y = offset.y;
 };
 
-// Handler cho viewport-level pointerdown - bắt tất cả clicks
+// Handler cho viewport-level pointerdown - chỉ xử lý pin drag, không pan
 const handleViewportPointerDown = (event: PointerEvent) => {
-  // Nếu đang placing pin hoặc đang kéo pin, không pan
-  if (props.placingPin || draggingPinId.value) return;
-
-  // Kiểm tra xem có click vào pin hoặc button không - nếu có thì return để event đó xử lý
+  // Không pan nữa - để PDF scroll tự nhiên
+  // Chỉ xử lý khi click vào pin hoặc đang placing pin
   const target = event.target as HTMLElement;
-  if (target.closest('.pin-element') || target.closest('button')) return;
-
-  // Bắt đầu pan
-  startPan(event);
+  if (!target.closest('.pin-element') && !props.placingPin) return;
 };
 
 // pointermove đặt ở viewport (bên ngoài content transform)
@@ -374,6 +381,42 @@ const zoneStyle = (shape?: Zone["shape"]) => ({
   top: `${clamp(shape?.y ?? 0) * 100}%`,
   width: `${clamp(shape?.width ?? 0) * 100}%`,
   height: `${clamp(shape?.height ?? 0) * 100}%`
+});
+
+// === Sync overlay height với PDF ===
+const syncOverlayHeight = () => {
+  // Đợi một chút để PDF render xong
+  setTimeout(() => {
+    const pdfEl = pdfObjectRef.value;
+    if (!pdfEl) return;
+
+    // Lấy chiều cao thực tế của PDF object
+    const rect = pdfEl.getBoundingClientRect();
+    if (rect.height > 0) {
+      overlayHeight.value = rect.height;
+      console.log('Synced overlay height:', rect.height);
+    }
+  }, 500);
+};
+
+// Watch drawing changes để sync lại overlay
+watch(() => props.drawing, () => {
+  overlayHeight.value = 0; // Reset
+  syncOverlayHeight();
+});
+
+// Sync định kỳ để handle các trường hợp PDF render chậm
+let syncInterval: NodeJS.Timeout | null = null;
+onMounted(() => {
+  syncInterval = setInterval(() => {
+    if (pdfObjectRef.value) {
+      syncOverlayHeight();
+    }
+  }, 2000);
+});
+
+onUnmounted(() => {
+  if (syncInterval) clearInterval(syncInterval);
 });
 </script>
 

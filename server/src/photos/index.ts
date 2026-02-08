@@ -229,7 +229,7 @@ router.post(
       const data = XLSX.utils.sheet_to_json(worksheet);
 
       // Parse and validate annotations
-      const annotations = data.map((row: any) => {
+      const annotations = data.map((row: any, index: number) => {
         // Required fields
         const x1 = Number(row.x1);
         const y1 = Number(row.y1);
@@ -237,11 +237,17 @@ router.post(
         const y2 = Number(row.y2);
 
         if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) {
-          throw errors.validation("Tọa độ không hợp lệ. Cần có x1, y1, x2, y2");
+          throw errors.validation(
+            `Hàng ${index + 2}: Tọa độ không hợp lệ. Cần có x1, y1, x2, y2 với giá trị số. ` +
+            `Nhận được: x1=${row.x1}, y1=${row.y1}, x2=${row.x2}, y2=${row.y2}`
+          );
         }
 
         if (x1 < 0 || x1 > 1 || y1 < 0 || y1 > 1 || x2 < 0 || x2 > 1 || y2 < 0 || y2 > 1) {
-          throw errors.validation("Tọa độ phải nằm trong khoảng 0-1");
+          throw errors.validation(
+            `Hàng ${index + 2}: Tọa độ phải nằm trong khoảng 0-1. ` +
+            `Nhận được: x1=${x1}, y1=${y1}, x2=${x2}, y2=${y2}`
+          );
         }
 
         // Calculate pixel distance (will be recalculated on client based on image size)
