@@ -35,6 +35,10 @@ Thumbs.db
 # Uploads (local development)
 server/uploads/
 
+# Database sync scripts (contains credentials)
+sync-database-to-atlas.*
+.env.backup.*
+
 # Temporary files
 *.tmp
 temp/

@@ -14,7 +14,7 @@
 
  runtimeConfig: {
    public: {
-     apiBase: process.env.NUXT_PUBLIC_API_BASE || "http://localhost:8888"
+     apiBase: process.env.NUXT_PUBLIC_API_BASE || "http://localhost:4000/api"
    }
  },
 

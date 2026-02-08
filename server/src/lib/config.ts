@@ -11,7 +11,7 @@ export const config = {
   port: toNumber(process.env.PORT, 4000),
   mongoUri: process.env.MONGO_URI ?? process.env.DATABASE_URL ?? "",
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
-  jwtAccessSecret: process.env.JWT_ACCESS_SECRET ?? "",
+  jwtAccessSecret: process.env.JWT_ACCESS_SECRET ?? process.env.JWT_SECRET ?? "",
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET ?? "",
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL ?? "15m",
   refreshTokenTtl: process.env.REFRESH_TOKEN_TTL ?? "7d",
