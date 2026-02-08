@@ -5,8 +5,9 @@ FROM node:20-alpine AS base
 FROM base AS deps
 WORKDIR /app
 
-# Copy package files
+# Copy package files AND scripts folder (needed for postinstall)
 COPY package.json package-lock.json* ./
+COPY scripts ./scripts
 RUN npm ci
 
 # Build the application
