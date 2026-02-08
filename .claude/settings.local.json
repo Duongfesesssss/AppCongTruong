@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx nuxi typecheck:*)",
+      "Bash(npx nuxi prepare:*)",
+      "Bash(npx nuxi build:*)"
+    ]
+  }
+}
