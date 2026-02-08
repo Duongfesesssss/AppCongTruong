@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7
+    container_name: appcongtruong-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: appcongtruong
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - app-network
+
+  # Backend API Server
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: appcongtruong-server
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGO_URI: mongodb://admin:${MONGO_ROOT_PASSWORD}@mongodb:27017/appcongtruong?authSource=admin
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      UPLOAD_MAX_IMAGE_MB: 20
+      UPLOAD_MAX_PDF_MB: 100
+      # AWS S3 Configuration
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+      STORAGE_TYPE: s3
+    volumes:
+      - server_uploads:/app/uploads
+    depends_on:
+      - mongodb
+    networks:
+      - app-network
+
+  # Frontend Nuxt App
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: appcongtruong-client
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE}
+    depends_on:
+      - server
+    networks:
+      - app-network
+
+  # Nginx Reverse Proxy (Optional - for SSL)
+  nginx:
+    image: nginx:alpine
+    container_name: appcongtruong-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - client
+      - server
+    networks:
+      - app-network
+
+volumes:
+  mongodb_data:
+    driver: local
+  server_uploads:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
