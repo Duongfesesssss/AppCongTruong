@@ -59,8 +59,8 @@
       </div>
     </div>
 
-    <!-- Children -->
-    <div v-if="hasChildren && expanded" class="mt-0.5">
+    <!-- Children (không hiển thị tasks trên cây) -->
+    <div v-if="hasChildren && expanded && node.type !== 'drawing'" class="mt-0.5">
       <TreeNode
         v-for="child in node.children"
         :key="child.id"
@@ -88,7 +88,11 @@ const emit = defineEmits<{
 }>();
 
 const expanded = ref(true);
-const hasChildren = computed(() => (node.value.children || []).length > 0);
+// Không hiển thị expand button cho drawing vì tasks không hiển thị trên cây
+const hasChildren = computed(() => {
+  if (node.value.type === 'drawing') return false;
+  return (node.value.children || []).length > 0;
+});
 
 const toggle = () => {
   expanded.value = !expanded.value;
