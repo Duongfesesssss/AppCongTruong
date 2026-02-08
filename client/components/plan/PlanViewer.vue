@@ -6,11 +6,12 @@
         <p class="text-[10px] uppercase tracking-widest text-slate-400 sm:text-xs">Plan View</p>
         <h2 class="truncate text-sm font-semibold text-slate-900 sm:text-base">{{ drawingTitle }}</h2>
       </div>
-      <div class="flex items-center gap-1 sm:gap-2">
-        <button class="btn" @click="zoomOut">−</button>
-        <span class="text-[10px] text-slate-500 sm:text-xs">{{ Math.round(zoom * 100) }}%</span>
-        <button class="btn" @click="zoomIn">+</button>
-        <button class="btn hidden sm:inline-flex" @click="resetView">Reset</button>
+      <!-- Zoom buttons disabled - PDF has native zoom -->
+      <div class="flex items-center gap-1 sm:gap-2" style="opacity: 0.3; pointer-events: none;">
+        <button class="btn" disabled>−</button>
+        <span class="text-[10px] text-slate-500 sm:text-xs">100%</span>
+        <button class="btn" disabled>+</button>
+        <button class="btn hidden sm:inline-flex" disabled>Reset</button>
       </div>
     </div>
 
@@ -40,10 +41,6 @@
       class="relative overflow-hidden bg-slate-50"
       style="touch-action: none"
       :class="placingPin ? 'h-[50vh] sm:h-[65vh]' : 'h-[55vh] sm:h-[70vh]'"
-      @pointerdown="handleViewportPointerDown"
-      @pointerup="handlePointerUp"
-      @pointerleave="handlePointerUp"
-      @pointermove="handlePointerMove"
     >
       <div v-if="loading" class="flex h-full items-center justify-center text-sm text-slate-500">
         Đang tải bản vẽ...
@@ -77,7 +74,10 @@
             @click.self="handleOverlayClick"
             @mousemove.self="updateGhostPin"
             @mouseleave="ghostPin = null"
-            @pointerdown.self="startPan"
+            @pointerdown="handleViewportPointerDown"
+            @pointerup="handlePointerUp"
+            @pointerleave="handlePointerUp"
+            @pointermove="handlePointerMove"
           >
             <!-- Ghost pin -->
             <div
@@ -198,7 +198,9 @@ const fileUrl = computed(() => {
 });
 
 const transformStyle = computed(() => ({
-  transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom.value})`,
+  // Chỉ dùng translate để pan, không dùng scale để tránh PDF bị vỡ ảnh
+  // PDF có zoom native riêng, không cần CSS scale
+  transform: `translate(${offset.x}px, ${offset.y}px)`,
   transformOrigin: "top left"
 }));
 
