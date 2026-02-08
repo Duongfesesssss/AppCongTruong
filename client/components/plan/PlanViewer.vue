@@ -56,15 +56,21 @@
         class="h-full w-full"
         :class="placingPin ? 'cursor-crosshair' : draggingPinId ? 'cursor-grabbing' : 'cursor-grab'"
       >
-        <div ref="contentRef" class="relative h-full w-full" :style="transformStyle">
-          <!-- Dùng iframe thay object: cách ly VDOM, pointer-events-none hoạt động chính xác,
-               và #toolbar=0 được tuân thủ tốt hơn trên mọi trình duyệt -->
-          <iframe
-            :src="fileUrl"
-            class="pointer-events-none h-full w-full border-0"
+        <div ref="contentRef" class="relative" :style="transformStyle">
+          <!-- Dùng object thay iframe: height tự động theo nội dung PDF
+               min-height đảm bảo có đủ chiều cao để scroll xem full PDF -->
+          <object
+            :data="fileUrl"
+            type="application/pdf"
+            class="pointer-events-none w-full"
+            style="min-height: 200vh; height: auto;"
             aria-label="Bản vẽ"
-            loading="lazy"
-          ></iframe>
+          >
+            <p class="p-4 text-sm text-slate-500">
+              Trình duyệt không hỗ trợ xem PDF.
+              <a :href="fileUrl" target="_blank" class="text-blue-600 hover:underline">Tải xuống tại đây</a>
+            </p>
+          </object>
 
           <!-- Overlay: pins, zones, placement catcher -->
           <div
