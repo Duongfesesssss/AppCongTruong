@@ -28,6 +28,7 @@ import reportRoutes from "./reports";
 import { seedAdminUser } from "./auth/seed-admin";
 
 const app = express();
+app.set("trust proxy", 1);
 
 const origins = config.corsOrigin
   .split(",")
