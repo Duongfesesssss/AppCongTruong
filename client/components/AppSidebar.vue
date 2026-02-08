@@ -149,12 +149,12 @@ const confirmDelete = async () => {
 
   try {
     const endpoints: Record<string, string> = {
-      project: `/api/projects/${nodeId}`,
-      building: `/api/buildings/${nodeId}`,
-      floor: `/api/floors/${nodeId}`,
-      discipline: `/api/disciplines/${nodeId}`,
-      drawing: `/api/drawings/${nodeId}`,
-      task: `/api/tasks/${nodeId}`
+      project: `/projects/${nodeId}`,
+      building: `/buildings/${nodeId}`,
+      floor: `/floors/${nodeId}`,
+      discipline: `/disciplines/${nodeId}`,
+      drawing: `/drawings/${nodeId}`,
+      task: `/tasks/${nodeId}`
     };
 
     const endpoint = endpoints[nodeType];

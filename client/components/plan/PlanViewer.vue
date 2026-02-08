@@ -190,7 +190,7 @@ const token = useState<string | null>("auth-token", () => null);
 const fileUrl = computed(() => {
   if (!props.drawing) return "";
   const id = props.drawing._id || props.drawing.id;
-  const base = `${useRuntimeConfig().public.apiBase}/api/drawings/${id}/file`;
+  const base = `${useRuntimeConfig().public.apiBase}/drawings/${id}/file`;
   const url = token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
   // Ẩn toolbar/navpane/scrollbar của PDF viewer
   return `${url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`;

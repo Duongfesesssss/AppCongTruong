@@ -390,7 +390,7 @@ const previewPixelLength = computed(() => {
 const handleSave = async () => {
   saving.value = true;
   try {
-    await api.patch(`/api/photos/${props.photoId}`, {
+    await api.patch(`/photos/${props.photoId}`, {
       annotations: annotations.value
     });
     toast.push("Đã lưu chú thích đo đạc", "success");

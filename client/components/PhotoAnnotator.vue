@@ -737,7 +737,7 @@ const saveAnnotations = async () => {
   }
 
   try {
-    await api.patch(`/api/photos/${props.photoId}`, {
+    await api.patch(`/photos/${props.photoId}`, {
       annotations: lines.value
     });
     toast.push("Đã lưu đo đạc", "success");
@@ -874,7 +874,7 @@ watch(() => props.show, (newVal, oldVal) => {
       // Use cached photoId instead of props.photoId
       const photoIdToSave = cachedPhotoId.value;
       if (photoIdToSave) {
-        api.patch(`/api/photos/${photoIdToSave}`, {
+        api.patch(`/photos/${photoIdToSave}`, {
           annotations: lines.value
         }).then(() => {
           console.log("Auto-saved annotations on close");

@@ -217,8 +217,8 @@ const loadTask = async () => {
   error.value = "";
   try {
     const [taskData, photosData] = await Promise.all([
-      api.get<any>(`/api/tasks/${props.taskId}`),
-      api.get<any[]>(`/api/tasks/${props.taskId}/photos`)
+      api.get<any>(`/tasks/${props.taskId}`),
+      api.get<any[]>(`/tasks/${props.taskId}/photos`)
     ]);
     task.value = taskData;
     photos.value = photosData || [];
@@ -380,7 +380,7 @@ const confirmDeletePhoto = async () => {
   console.log("Deleting photo:", deletingPhoto.value._id);
 
   try {
-    await api.delete(`/api/photos/${deletingPhoto.value._id}`);
+    await api.delete(`/photos/${deletingPhoto.value._id}`);
     toast.push("Đã xoá ảnh", "success");
     await loadTask();
     emit("updated");

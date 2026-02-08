@@ -186,9 +186,9 @@ const loadDrawingData = async (node: SelectedNode | null) => {
   error.value = "";
   try {
     const [drawingData, tasksData, zonesData] = await Promise.all([
-      api.get<Record<string, unknown>>(`/api/drawings/${node.id}`),
-      api.get<any[]>(`/api/tasks?drawingId=${node.id}`),
-      api.get<any[]>(`/api/drawings/${node.id}/zones`)
+      api.get<Record<string, unknown>>(`/drawings/${node.id}`),
+      api.get<any[]>(`/tasks?drawingId=${node.id}`),
+      api.get<any[]>(`/drawings/${node.id}/zones`)
     ]);
     drawing.value = drawingData;
     pins.value = tasksData || [];
@@ -212,8 +212,8 @@ const reloadTasksOnly = async () => {
   if (!node || node.type !== "drawing") return;
   try {
     const [tasksData, zonesData] = await Promise.all([
-      api.get<any[]>(`/api/tasks?drawingId=${node.id}`),
-      api.get<any[]>(`/api/drawings/${node.id}/zones`)
+      api.get<any[]>(`/tasks?drawingId=${node.id}`),
+      api.get<any[]>(`/drawings/${node.id}/zones`)
     ]);
     pins.value = tasksData || [];
     zones.value = zonesData || [];
