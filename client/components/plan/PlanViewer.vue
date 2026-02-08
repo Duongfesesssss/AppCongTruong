@@ -72,10 +72,11 @@
             </p>
           </object>
 
-          <!-- Overlay: pins, zones, placement catcher -->
+          <!-- Overlay: pins, zones, placement catcher - phải match height với PDF -->
           <div
             ref="overlayRef"
-            class="absolute inset-0 pointer-events-auto"
+            class="absolute inset-x-0 top-0 pointer-events-auto"
+            style="min-height: 200vh; height: auto;"
             :class="placingPin ? 'z-10' : ''"
             @click.self="handleOverlayClick"
             @mousemove.self="updateGhostPin"
