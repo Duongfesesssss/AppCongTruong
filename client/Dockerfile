@@ -36,9 +36,9 @@ ENV NODE_ENV=production
 COPY --from=builder /app/.output ./.output
 
 # Nitro looks for public assets in server/chunks/public/ instead of public/
-# Remove any existing directory first, then create symlink
-RUN rm -rf /app/.output/server/chunks/public && \
-    ln -sf /app/.output/public /app/.output/server/chunks/public
+# Copy files directly (symlinks don't resolve reliably in Alpine)
+RUN mkdir -p /app/.output/server/chunks/public && \
+    cp -r /app/.output/public/. /app/.output/server/chunks/public/
 
 # Expose port
 EXPOSE 3000
