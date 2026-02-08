@@ -1,21 +1,21 @@
 version: '3.8'
 
 services:
-  # MongoDB Database
-  mongodb:
-    image: mongo:7
-    container_name: appcongtruong-mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
-      MONGO_INITDB_DATABASE: appcongtruong
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - app-network
+  # MongoDB Database - Commented out since using MongoDB Atlas
+  # mongodb:
+  #   image: mongo:7
+  #   container_name: appcongtruong-mongodb
+  #   restart: unless-stopped
+  #   ports:
+  #     - "27017:27017"
+  #   environment:
+  #     MONGO_INITDB_ROOT_USERNAME: admin
+  #     MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+  #     MONGO_INITDB_DATABASE: appcongtruong
+  #   volumes:
+  #     - mongodb_data:/data/db
+  #   networks:
+  #     - app-network
 
   # Backend API Server
   server:
@@ -42,8 +42,8 @@ services:
       STORAGE_TYPE: ${STORAGE_TYPE:-local}
     volumes:
       - server_uploads:/app/uploads
-    depends_on:
-      - mongodb
+    # depends_on:
+    #   - mongodb  # Removed since using MongoDB Atlas
     networks:
       - app-network
 
@@ -82,8 +82,8 @@ services:
       - app-network
 
 volumes:
-  mongodb_data:
-    driver: local
+  # mongodb_data:  # Commented out since using MongoDB Atlas
+  #   driver: local
   server_uploads:
     driver: local
 
