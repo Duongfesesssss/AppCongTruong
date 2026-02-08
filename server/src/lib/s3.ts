@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Readable } from "node:stream";
 import { config } from "./config";
 import { logger } from "./logger";
 
@@ -89,4 +90,24 @@ export const getS3SignedUrl = async (key: string, expiresIn: number = 3600): Pro
  */
 export const getS3PublicUrl = (key: string): string => {
   return `https://${config.aws.s3Bucket}.s3.${config.aws.region}.amazonaws.com/${key}`;
+};
+
+/**
+ * Get readable stream from S3 (for proxying through server)
+ */
+export const getS3Stream = async (key: string): Promise<Readable> => {
+  const client = getS3Client();
+
+  const command = new GetObjectCommand({
+    Bucket: config.aws.s3Bucket,
+    Key: key
+  });
+
+  const response = await client.send(command);
+
+  if (!response.Body) {
+    throw new Error("No body in S3 response");
+  }
+
+  return response.Body as Readable;
 };

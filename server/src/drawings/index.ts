@@ -18,7 +18,7 @@ import { config } from "../lib/config";
 import { uploadLimiter } from "../middlewares/rate-limit";
 import { sanitizeText } from "../lib/utils";
 import { ZoneModel } from "../zones/zone.model";
-import { getS3SignedUrl, deleteFromS3 } from "../lib/s3";
+import { getS3SignedUrl, deleteFromS3, getS3Stream } from "../lib/s3";
 
 const router = Router();
 const upload = createUploader({
@@ -119,20 +119,20 @@ router.get(
     // CORS headers cho embedded content
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Content-Type", drawing.mimeType);
+
+    const safeName = path.basename(drawing.originalName || drawing.storageKey);
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
 
     if (config.storageType === "s3") {
-      // Get signed URL from S3 and redirect
-      const signedUrl = await getS3SignedUrl(drawing.storageKey);
-      return res.redirect(signedUrl);
+      // Stream from S3 through server (avoids CORS issues)
+      const stream = await getS3Stream(drawing.storageKey);
+      stream.pipe(res);
     } else {
       // Serve from local filesystem
       const safeKey = path.basename(drawing.storageKey);
       const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
       if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
-
-      res.setHeader("Content-Type", drawing.mimeType);
-      const safeName = path.basename(drawing.originalName || safeKey);
-      res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
 
       const stream = fs.createReadStream(filePath);
       stream.pipe(res);

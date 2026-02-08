@@ -12,7 +12,7 @@ import { errors } from "../lib/errors";
 import { createUploader, handleFileUpload } from "../lib/uploads";
 import { config } from "../lib/config";
 import { uploadLimiter } from "../middlewares/rate-limit";
-import { getS3SignedUrl, deleteFromS3 } from "../lib/s3";
+import { getS3SignedUrl, deleteFromS3, getS3Stream } from "../lib/s3";
 import { TaskModel } from "../tasks/task.model";
 import { ProjectModel } from "../projects/project.model";
 import { PhotoModel } from "./photo.model";
@@ -142,20 +142,21 @@ router.get(
     // CORS headers cho embedded content
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Content-Type", photo.mimeType);
 
     if (config.storageType === "s3") {
-      // Get signed URL from S3 and redirect
-      const signedUrl = await getS3SignedUrl(photo.storageKey);
-      return res.redirect(signedUrl);
+      // Stream from S3 through server (avoids CORS issues)
+      const stream = await getS3Stream(photo.storageKey);
+      const safeKey = path.basename(photo.storageKey);
+      res.setHeader("Content-Disposition", `inline; filename="${safeKey}"`);
+      stream.pipe(res);
     } else {
       // Serve from local filesystem
       const safeKey = path.basename(photo.storageKey);
       const filePath = path.join(process.cwd(), "uploads", "photos", safeKey);
       if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
 
-      res.setHeader("Content-Type", photo.mimeType);
       res.setHeader("Content-Disposition", `inline; filename="${safeKey}"`);
-
       fs.createReadStream(filePath).pipe(res);
     }
   })
