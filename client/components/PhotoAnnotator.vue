@@ -11,6 +11,23 @@
           <div class="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 sm:px-6 sm:py-4">
             <h3 class="text-base font-semibold text-slate-900 sm:text-lg">Đo đạc ảnh</h3>
             <div class="flex items-center gap-1 sm:gap-2">
+              <!-- Import button -->
+              <input
+                ref="importFileInput"
+                type="file"
+                accept=".xlsx,.xls"
+                class="hidden"
+                @change="handleImportExcel"
+              />
+              <button
+                class="flex h-9 items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 text-xs font-medium text-blue-700 hover:bg-blue-100 active:bg-blue-200 sm:h-10 sm:px-3 sm:text-sm"
+                @click="triggerImport"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                <span class="hidden xs:inline">Import</span>
+              </button>
               <!-- Export button -->
               <button
                 class="flex h-9 items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 active:bg-emerald-200 sm:h-10 sm:px-3 sm:text-sm"
@@ -237,6 +254,7 @@ const toast = useToast();
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const ctx = ref<CanvasRenderingContext2D | null>(null);
 const image = ref<HTMLImageElement | null>(null);
+const importFileInput = ref<HTMLInputElement | null>(null);
 
 const mode = ref<"draw" | "pan" | "select">("draw");
 const lines = ref<Line[]>([]);
@@ -759,18 +777,80 @@ const exportImage = () => {
         toast.push("Không thể tạo file ảnh", "error");
         return;
       }
-
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `measurement-${Date.now()}.png`;
       a.click();
       URL.revokeObjectURL(url);
-
-      toast.push("Đã tải ảnh về máy", "success");
-    }, "image/png");
+      toast.push("Đã tải về ảnh", "success");
+    });
   } catch (err) {
+    console.error("Export error:", err);
     toast.push("Lỗi khi xuất ảnh", "error");
+  }
+};
+
+const triggerImport = () => {
+  if (importFileInput.value) {
+    importFileInput.value.click();
+  }
+};
+
+const handleImportExcel = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  if (!props.photoId) {
+    toast.push("Lỗi: không có ID ảnh", "error");
+    return;
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    // mode=append: thêm vào lines hiện tại, mode=replace: thay thế tất cả
+    const mode = "append"; // hoặc "replace"
+
+    const response = await api.upload<{
+      photo: any;
+      imported: number;
+      total: number;
+    }>(`/photos/${props.photoId}/import-annotations?mode=${mode}`, formData);
+
+    // Reload annotations from response
+    if (response.photo && response.photo.annotations) {
+      lines.value = response.photo.annotations.map((line: any) => {
+        // Convert normalized coordinates to pixel coordinates
+        if (!image.value) return line;
+
+        const imgWidth = image.value.width;
+        const imgHeight = image.value.height;
+
+        return {
+          ...line,
+          x1: line.x1 * imgWidth,
+          y1: line.y1 * imgHeight,
+          x2: line.x2 * imgWidth,
+          y2: line.y2 * imgHeight,
+          distance: Math.sqrt(
+            Math.pow(line.x2 * imgWidth - line.x1 * imgWidth, 2) +
+            Math.pow(line.y2 * imgHeight - line.y1 * imgHeight, 2)
+          )
+        };
+      });
+
+      draw();
+      toast.push(`Đã import ${response.imported} đường đo`, "success");
+      emit("saved");
+    }
+  } catch (err) {
+    console.error("Import error:", err);
+    toast.push((err as Error).message || "Lỗi khi import Excel", "error");
+  } finally {
+    input.value = "";
   }
 };
 
