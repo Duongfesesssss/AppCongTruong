@@ -13,6 +13,11 @@ RUN npm ci
 # Build the application
 FROM base AS builder
 WORKDIR /app
+
+# Receive build arg
+ARG NUXT_PUBLIC_API_BASE
+ENV NUXT_PUBLIC_API_BASE=${NUXT_PUBLIC_API_BASE}
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 

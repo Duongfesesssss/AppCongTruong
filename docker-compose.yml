@@ -29,7 +29,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
-      MONGO_URI: mongodb://admin:${MONGO_ROOT_PASSWORD}@mongodb:27017/appcongtruong?authSource=admin
+      MONGO_URI: ${MONGO_URI}
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       UPLOAD_MAX_IMAGE_MB: 20
@@ -52,6 +52,8 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
+      args:
+        NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE}
     container_name: appcongtruong-client
     restart: unless-stopped
     ports:
