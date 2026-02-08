@@ -81,7 +81,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/health", (_req, res) => sendSuccess(res, { ok: true }));
+app.get("/api/health", (_req, res) => sendSuccess(res, { ok: true }));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
