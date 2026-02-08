@@ -20,7 +20,7 @@ export const getS3Client = (): S3Client => {
       }
     });
 
-    logger.info("S3 client initialized", { region: config.aws.region });
+    logger.info({ region: config.aws.region }, "S3 client initialized");
   }
 
   return s3Client;
@@ -47,7 +47,7 @@ export const uploadToS3 = async (
 
   const url = `https://${config.aws.s3Bucket}.s3.${config.aws.region}.amazonaws.com/${key}`;
 
-  logger.info("File uploaded to S3", { key, mimeType });
+  logger.info({ key, mimeType }, "File uploaded to S3");
 
   return { key, url };
 };
@@ -65,7 +65,7 @@ export const deleteFromS3 = async (key: string): Promise<void> => {
 
   await client.send(command);
 
-  logger.info("File deleted from S3", { key });
+  logger.info({ key }, "File deleted from S3");
 };
 
 /**
