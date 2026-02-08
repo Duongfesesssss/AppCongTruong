@@ -14,12 +14,17 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 
-COPY --from=deps /app/node_modules ./node_modules
+# Copy source code first, then node_modules from deps stage
+# This ensures clean node_modules from npm ci is used (not local ones)
 COPY . .
+COPY --from=deps /app/node_modules ./node_modules
 
-# Build with production environment (build with default, runtime will override)
+# Build with production environment
 ENV NODE_ENV=production
 RUN npm run build
+
+# Verify build output exists
+RUN ls -la .output/public/_nuxt/ || echo "WARNING: _nuxt directory missing!"
 
 # Production image
 FROM base AS runner
@@ -27,13 +32,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copy necessary files
+# Copy the entire build output
 COPY --from=builder /app/.output ./.output
-COPY --from=builder /app/package.json ./package.json
-
-# Create symlink for static files (fix Nuxt looking in wrong location)
-RUN mkdir -p /app/.output/server/chunks && \
-    ln -sf /app/.output/public /app/.output/server/chunks/public
 
 # Expose port
 EXPOSE 3000
