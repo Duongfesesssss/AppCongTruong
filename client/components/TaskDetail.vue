@@ -258,7 +258,7 @@ const handlePhotoUploadWithMetadata = async (data: {
       if (data.location) formData.append("location", data.location);
       if (data.category) formData.append("category", data.category);
 
-      await api.upload("/api/photos", formData);
+      await api.upload("/photos", formData);
     }
 
     toast.push(
@@ -289,7 +289,7 @@ const handlePhotoUpload = async (e: Event) => {
       const formData = new FormData();
       formData.append("taskId", props.taskId);
       formData.append("file", file);
-      await api.upload("/api/photos", formData);
+      await api.upload("/photos", formData);
     }
     toast.push(
       input.files.length > 1

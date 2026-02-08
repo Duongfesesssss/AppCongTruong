@@ -46,7 +46,7 @@ export const useAuth = () => {
     error.value = "";
     try {
       const api = useApi();
-      const result = await api.post<{ accessToken: string; user: AuthUser }>("/api/auth/login", {
+      const result = await api.post<{ accessToken: string; user: AuthUser }>("/auth/login", {
         email,
         password
       });
@@ -66,7 +66,7 @@ export const useAuth = () => {
     error.value = "";
     try {
       const api = useApi();
-      const result = await api.post<{ accessToken: string; user: AuthUser }>("/api/auth/register", {
+      const result = await api.post<{ accessToken: string; user: AuthUser }>("/auth/register", {
         name,
         email,
         password
@@ -85,7 +85,7 @@ export const useAuth = () => {
   const logout = async () => {
     try {
       const api = useApi();
-      await api.post("/api/auth/logout", {});
+      await api.post("/auth/logout", {});
     } catch {
       // ignore
     }
@@ -97,7 +97,7 @@ export const useAuth = () => {
     if (!token.value) return;
     try {
       const api = useApi();
-      const result = await api.get<{ user: AuthUser }>("/api/auth/me");
+      const result = await api.get<{ user: AuthUser }>("/auth/me");
       setUser(result.user);
     } catch {
       setToken(null);

@@ -17,7 +17,7 @@ export const useProjectTree = () => {
     error.value = "";
     try {
       const api = useApi();
-      tree.value = await api.get<ProjectTreeNode[]>("/api/project-tree");
+      tree.value = await api.get<ProjectTreeNode[]>("/project-tree");
     } catch (err) {
       error.value = (err as Error).message;
     } finally {

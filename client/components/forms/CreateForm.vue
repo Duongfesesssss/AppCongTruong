@@ -209,28 +209,28 @@ const handleSubmit = async () => {
 
     switch (props.type) {
       case "project":
-        result = await api.post("/api/projects", {
+        result = await api.post("/projects", {
           name: form.name,
           description: form.description || undefined
         });
         break;
 
       case "building":
-        result = await api.post("/api/buildings", {
+        result = await api.post("/buildings", {
           projectId: props.parentId,
           name: form.name
         });
         break;
 
       case "floor":
-        result = await api.post("/api/floors", {
+        result = await api.post("/floors", {
           buildingId: props.parentId,
           name: form.name
         });
         break;
 
       case "discipline":
-        result = await api.post("/api/disciplines", {
+        result = await api.post("/disciplines", {
           floorId: props.parentId,
           name: form.name
         });
@@ -245,12 +245,12 @@ const handleSubmit = async () => {
         formData.append("disciplineId", props.parentId || "");
         formData.append("name", form.name);
         formData.append("file", uploadFile.value);
-        result = await api.upload("/api/drawings", formData);
+        result = await api.upload("/drawings", formData);
         break;
       }
 
       case "task":
-        result = await api.post("/api/tasks", {
+        result = await api.post("/tasks", {
           drawingId: props.parentId,
           pinName: form.pinName || undefined,
           roomName: form.roomName || undefined,

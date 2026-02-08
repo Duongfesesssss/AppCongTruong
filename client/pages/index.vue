@@ -263,7 +263,7 @@ const handlePinMove = async (data: { pinId: string; pinX: number; pinY: number }
   }
 
   try {
-    await api.post("/api/tasks", {
+    await api.post("/tasks", {
       id: data.pinId,
       pinX: data.pinX,
       pinY: data.pinY

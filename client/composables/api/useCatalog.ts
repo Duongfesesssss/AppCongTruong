@@ -50,23 +50,23 @@ export const useCatalog = () => {
   const api = useApi();
 
   const fetchProjects = async () => {
-    projects.value = await api.get<ProjectItem[]>("/api/projects");
+    projects.value = await api.get<ProjectItem[]>("/projects");
   };
 
   const fetchBuildings = async () => {
-    buildings.value = await api.get<BuildingItem[]>("/api/buildings");
+    buildings.value = await api.get<BuildingItem[]>("/buildings");
   };
 
   const fetchFloors = async () => {
-    floors.value = await api.get<FloorItem[]>("/api/floors");
+    floors.value = await api.get<FloorItem[]>("/floors");
   };
 
   const fetchDisciplines = async () => {
-    disciplines.value = await api.get<DisciplineItem[]>("/api/disciplines");
+    disciplines.value = await api.get<DisciplineItem[]>("/disciplines");
   };
 
   const fetchDrawings = async () => {
-    drawings.value = await api.get<DrawingItem[]>("/api/drawings");
+    drawings.value = await api.get<DrawingItem[]>("/drawings");
   };
 
   const fetchAll = async () => {
