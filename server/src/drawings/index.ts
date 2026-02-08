@@ -13,11 +13,12 @@ import { BuildingModel } from "../buildings/building.model";
 import { ProjectModel } from "../projects/project.model";
 import { createDrawingSchema, drawingIdSchema, listDrawingSchema } from "./drawing.schema";
 import { DrawingModel } from "./drawing.model";
-import { createUploader } from "../lib/uploads";
+import { createUploader, handleFileUpload } from "../lib/uploads";
 import { config } from "../lib/config";
 import { uploadLimiter } from "../middlewares/rate-limit";
 import { sanitizeText } from "../lib/utils";
 import { ZoneModel } from "../zones/zone.model";
+import { getS3SignedUrl, deleteFromS3 } from "../lib/s3";
 
 const router = Router();
 const upload = createUploader({
@@ -51,6 +52,9 @@ router.post(
     const project = await ProjectModel.findOne({ _id: discipline.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
 
+    // Handle file upload (S3 or local)
+    const storageKey = await handleFileUpload(req.file, "drawings");
+
     const drawing = await DrawingModel.create({
       projectId: project._id,
       buildingId: building._id,
@@ -58,7 +62,7 @@ router.post(
       disciplineId: discipline._id,
       name: sanitizeText(name),
       originalName: req.file.originalname,
-      storageKey: req.file.filename,
+      storageKey,
       mimeType: req.file.mimetype,
       size: req.file.size
     });
@@ -112,20 +116,27 @@ router.get(
     const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Drawing không tồn tại hoặc không có quyền");
 
-    const safeKey = path.basename(drawing.storageKey);
-    const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
-    if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
-
     // CORS headers cho embedded content
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    res.setHeader("Content-Type", drawing.mimeType);
-    const safeName = path.basename(drawing.originalName || safeKey);
-    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
-    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
 
-    const stream = fs.createReadStream(filePath);
-    stream.pipe(res);
+    if (config.storageType === "s3") {
+      // Get signed URL from S3 and redirect
+      const signedUrl = await getS3SignedUrl(drawing.storageKey);
+      return res.redirect(signedUrl);
+    } else {
+      // Serve from local filesystem
+      const safeKey = path.basename(drawing.storageKey);
+      const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
+      if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
+
+      res.setHeader("Content-Type", drawing.mimeType);
+      const safeName = path.basename(drawing.originalName || safeKey);
+      res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+
+      const stream = fs.createReadStream(filePath);
+      stream.pipe(res);
+    }
   })
 );
 
@@ -158,11 +169,22 @@ router.delete(
     const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Drawing không tồn tại hoặc không có quyền");
 
-    // Delete file from disk
-    const safeKey = path.basename(drawing.storageKey);
-    const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    // Delete file from storage
+    if (config.storageType === "s3") {
+      // Delete from S3
+      try {
+        await deleteFromS3(drawing.storageKey);
+      } catch (err) {
+        // Log error but don't fail the request
+        console.error("Failed to delete file from S3:", err);
+      }
+    } else {
+      // Delete from local filesystem
+      const safeKey = path.basename(drawing.storageKey);
+      const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
     }
 
     await DrawingModel.deleteOne({ _id: req.params.id });

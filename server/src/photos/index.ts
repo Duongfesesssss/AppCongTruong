@@ -9,9 +9,10 @@ import { asyncHandler, sendSuccess } from "../lib/response";
 import { validate } from "../middlewares/validation";
 import { requireAuth } from "../middlewares/require-auth";
 import { errors } from "../lib/errors";
-import { createUploader } from "../lib/uploads";
+import { createUploader, handleFileUpload } from "../lib/uploads";
 import { config } from "../lib/config";
 import { uploadLimiter } from "../middlewares/rate-limit";
+import { getS3SignedUrl, deleteFromS3 } from "../lib/s3";
 import { TaskModel } from "../tasks/task.model";
 import { ProjectModel } from "../projects/project.model";
 import { PhotoModel } from "./photo.model";
@@ -60,10 +61,14 @@ router.post(
     const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
 
+    // Get image dimensions
     let width: number | undefined;
     let height: number | undefined;
     try {
-      const dim = imageSize(req.file.path);
+      // For S3, use buffer; for local, use path
+      const dim = config.storageType === "s3"
+        ? imageSize(req.file.buffer)
+        : imageSize(req.file.path);
       width = dim.width ?? undefined;
       height = dim.height ?? undefined;
     } catch {
@@ -71,10 +76,13 @@ router.post(
       height = undefined;
     }
 
+    // Handle file upload (S3 or local)
+    const storageKey = await handleFileUpload(req.file, "photos");
+
     const photo = await PhotoModel.create({
       taskId: task._id,
       drawingId: task.drawingId,
-      storageKey: req.file.filename,
+      storageKey,
       mimeType: req.file.mimetype,
       size: req.file.size,
       width,
@@ -131,17 +139,25 @@ router.get(
     const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Photo không tồn tại hoặc không có quyền");
 
-    const safeKey = path.basename(photo.storageKey);
-    const filePath = path.join(process.cwd(), "uploads", "photos", safeKey);
-    if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
-
     // CORS headers cho embedded content
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    res.setHeader("Content-Type", photo.mimeType);
-    res.setHeader("Content-Disposition", `inline; filename="${safeKey}"`);
 
-    fs.createReadStream(filePath).pipe(res);
+    if (config.storageType === "s3") {
+      // Get signed URL from S3 and redirect
+      const signedUrl = await getS3SignedUrl(photo.storageKey);
+      return res.redirect(signedUrl);
+    } else {
+      // Serve from local filesystem
+      const safeKey = path.basename(photo.storageKey);
+      const filePath = path.join(process.cwd(), "uploads", "photos", safeKey);
+      if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
+
+      res.setHeader("Content-Type", photo.mimeType);
+      res.setHeader("Content-Disposition", `inline; filename="${safeKey}"`);
+
+      fs.createReadStream(filePath).pipe(res);
+    }
   })
 );
 
@@ -160,11 +176,22 @@ router.delete(
     const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Photo không tồn tại hoặc không có quyền");
 
-    // Delete file from disk
-    const safeKey = path.basename(photo.storageKey);
-    const filePath = path.join(process.cwd(), "uploads", "photos", safeKey);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    // Delete file from storage
+    if (config.storageType === "s3") {
+      // Delete from S3
+      try {
+        await deleteFromS3(photo.storageKey);
+      } catch (err) {
+        // Log error but don't fail the request
+        console.error("Failed to delete file from S3:", err);
+      }
+    } else {
+      // Delete from local filesystem
+      const safeKey = path.basename(photo.storageKey);
+      const filePath = path.join(process.cwd(), "uploads", "photos", safeKey);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
     }
 
     await PhotoModel.deleteOne({ _id: req.params.id });
