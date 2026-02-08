@@ -38,7 +38,7 @@
     <!-- Drawing viewport -->
     <div
       ref="viewportRef"
-      class="relative overflow-hidden bg-slate-50"
+      class="relative overflow-auto bg-slate-50"
       style="touch-action: none"
       :class="placingPin ? 'h-[50vh] sm:h-[65vh]' : 'h-[55vh] sm:h-[70vh]'"
     >

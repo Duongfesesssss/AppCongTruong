@@ -11,6 +11,17 @@
           <div class="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 sm:px-6 sm:py-4">
             <h3 class="text-base font-semibold text-slate-900 sm:text-lg">Đo đạc ảnh</h3>
             <div class="flex items-center gap-1 sm:gap-2">
+              <!-- Download template button -->
+              <button
+                class="flex h-9 items-center gap-1 rounded-lg border border-purple-200 bg-purple-50 px-2 text-xs font-medium text-purple-700 hover:bg-purple-100 active:bg-purple-200 sm:h-10 sm:px-3 sm:text-sm"
+                title="Tải file Excel mẫu"
+                @click="downloadExcelTemplate"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span class="hidden xs:inline">Mẫu</span>
+              </button>
               <!-- Import button -->
               <input
                 ref="importFileInput"
@@ -795,6 +806,55 @@ const triggerImport = () => {
   if (importFileInput.value) {
     importFileInput.value.click();
   }
+};
+
+const downloadExcelTemplate = () => {
+  // Tạo file Excel mẫu với SheetJS
+  const XLSX = (window as any).XLSX || require('xlsx');
+
+  // Dữ liệu mẫu
+  const templateData = [
+    {
+      x1: 0.1,
+      y1: 0.2,
+      x2: 0.3,
+      y2: 0.2,
+      realValue: 5.5,
+      unit: "m",
+      name: "Chiều dài tường",
+      category: "Kết cấu",
+      room: "Phòng khách",
+      notes: "Tường bê tông",
+      color: "#ef4444",
+      width: 2
+    },
+    {
+      x1: 0.4,
+      y1: 0.5,
+      x2: 0.4,
+      y2: 0.7,
+      realValue: 3.2,
+      unit: "m",
+      name: "Chiều cao cột",
+      category: "Kết cấu",
+      room: "Phòng ngủ",
+      notes: "",
+      color: "#3b82f6",
+      width: 2
+    }
+  ];
+
+  // Tạo worksheet
+  const ws = XLSX.utils.json_to_sheet(templateData);
+
+  // Tạo workbook
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Mẫu đo đạc");
+
+  // Download file
+  XLSX.writeFile(wb, "mau-do-dac.xlsx");
+
+  toast.push("Đã tải xuống file mẫu Excel", "success");
 };
 
 const handleImportExcel = async (event: Event) => {
