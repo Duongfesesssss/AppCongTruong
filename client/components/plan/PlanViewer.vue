@@ -39,7 +39,7 @@
     <div
       ref="viewportRef"
       class="relative overflow-auto bg-slate-50"
-      style="touch-action: none"
+      style="touch-action: pan-y pinch-zoom"
       :class="placingPin ? 'h-[50vh] sm:h-[65vh]' : 'h-[55vh] sm:h-[70vh]'"
     >
       <div v-if="loading" class="flex h-full items-center justify-center text-sm text-slate-500">
@@ -57,21 +57,16 @@
         :class="placingPin ? 'cursor-crosshair' : 'cursor-default'"
       >
         <div ref="contentRef" class="relative" :style="transformStyle">
-          <!-- Dùng object thay iframe: height tự động theo nội dung PDF -->
-          <object
-            ref="pdfObjectRef"
-            :data="fileUrl"
-            type="application/pdf"
-            class="pointer-events-none w-full"
-            style="min-height: 500vh; height: auto;"
-            aria-label="Bản vẽ"
-            @load="syncOverlayHeight"
-          >
-            <p class="p-4 text-sm text-slate-500">
-              Trình duyệt không hỗ trợ xem PDF.
-              <a :href="fileUrl" target="_blank" class="text-blue-600 hover:underline">Tải xuống tại đây</a>
-            </p>
-          </object>
+          <!-- PDF rendered via PDF.js canvas - hoạt động trên cả mobile -->
+          <div ref="pdfContainerRef" class="w-full">
+            <div v-if="pdfRendering" class="flex items-center justify-center py-12">
+              <svg class="h-5 w-5 animate-spin text-slate-400 mr-2" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              <span class="text-sm text-slate-500">Đang tải PDF...</span>
+            </div>
+          </div>
 
           <!-- Overlay: pins, zones, placement catcher - height sync với PDF qua JS -->
           <div
@@ -82,7 +77,6 @@
               placingPin && 'cursor-crosshair',
               draggingPinId && 'cursor-grabbing'
             ]"
-            :style="overlayStyle"
             @click.self="handleOverlayClick"
             @mousemove.self="updateGhostPin"
             @mouseleave="ghostPin = null"
@@ -179,7 +173,8 @@ const emit = defineEmits<{
 const viewportRef = ref<HTMLElement | null>(null);
 const contentRef = ref<HTMLElement | null>(null);
 const overlayRef = ref<HTMLElement | null>(null);
-const pdfObjectRef = ref<HTMLObjectElement | null>(null);
+const pdfContainerRef = ref<HTMLElement | null>(null);
+const pdfRendering = ref(false);
 
 // Zoom & pan
 const zoom = ref(1);
@@ -197,9 +192,6 @@ const pinDragMoved = ref(false);
 // Ghost pin khi đang placement
 const ghostPin = ref<{ x: number; y: number } | null>(null);
 
-// Overlay height sync với PDF
-const overlayHeight = ref<number>(0);
-
 // Computed
 const drawingTitle = computed(() => props.drawing?.name || "Chưa chọn bản vẽ");
 const token = useState<string | null>("auth-token", () => null);
@@ -207,9 +199,7 @@ const fileUrl = computed(() => {
   if (!props.drawing) return "";
   const id = props.drawing._id || props.drawing.id;
   const base = `${useRuntimeConfig().public.apiBase}/drawings/${id}/file`;
-  const url = token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
-  // Ẩn toolbar/navpane/scrollbar của PDF viewer
-  return `${url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`;
+  return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
 });
 
 const transformStyle = computed(() => ({
@@ -217,10 +207,6 @@ const transformStyle = computed(() => ({
   // PDF có zoom native riêng, không cần CSS scale
   transform: `translate(${offset.x}px, ${offset.y}px)`,
   transformOrigin: "top left"
-}));
-
-const overlayStyle = computed(() => ({
-  height: overlayHeight.value > 0 ? `${overlayHeight.value}px` : '100vh'
 }));
 
 const clamp = (v: number) => Math.min(Math.max(v, 0), 1);
@@ -383,40 +369,76 @@ const zoneStyle = (shape?: Zone["shape"]) => ({
   height: `${clamp(shape?.height ?? 0) * 100}%`
 });
 
-// === Sync overlay height với PDF ===
-const syncOverlayHeight = () => {
-  // Đợi một chút để PDF render xong
-  setTimeout(() => {
-    const pdfEl = pdfObjectRef.value;
-    if (!pdfEl) return;
+// === PDF.js rendering ===
+let currentPdfTask: any = null;
 
-    // Lấy chiều cao thực tế của PDF object
-    const rect = pdfEl.getBoundingClientRect();
-    if (rect.height > 0) {
-      overlayHeight.value = rect.height;
-      console.log('Synced overlay height:', rect.height);
+const renderPDF = async () => {
+  if (!process.client) return;
+  const url = fileUrl.value;
+  if (!url) return;
+
+  pdfRendering.value = true;
+
+  try {
+    const pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+    if (currentPdfTask) {
+      try { currentPdfTask.destroy(); } catch {}
     }
-  }, 500);
+
+    currentPdfTask = pdfjsLib.getDocument(url);
+    const pdf = await currentPdfTask.promise;
+
+    const container = pdfContainerRef.value;
+    if (!container) return;
+
+    // Xoá canvas cũ (giữ lại loading indicator nếu có)
+    const canvases = container.querySelectorAll('canvas');
+    canvases.forEach(c => c.remove());
+
+    const containerWidth = container.clientWidth || 800;
+    const pixelRatio = window.devicePixelRatio || 1;
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const naturalViewport = page.getViewport({ scale: 1 });
+      const scale = containerWidth / naturalViewport.width;
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width * pixelRatio);
+      canvas.height = Math.floor(viewport.height * pixelRatio);
+      canvas.style.width = `${Math.floor(viewport.width)}px`;
+      canvas.style.height = `${Math.floor(viewport.height)}px`;
+      canvas.style.display = 'block';
+
+      container.appendChild(canvas);
+
+      const ctx = canvas.getContext('2d')!;
+      ctx.scale(pixelRatio, pixelRatio);
+
+      await page.render({ canvasContext: ctx, viewport }).promise;
+    }
+  } catch (err: any) {
+    if (err?.name !== 'RenderingCancelledException') {
+      console.error('PDF render error:', err);
+    }
+  } finally {
+    pdfRendering.value = false;
+  }
 };
 
-// Watch drawing changes để sync lại overlay
+// Watch drawing changes để render lại PDF
 watch(() => props.drawing, () => {
-  overlayHeight.value = 0; // Reset
-  syncOverlayHeight();
+  nextTick(() => renderPDF());
 });
 
-// Sync định kỳ để handle các trường hợp PDF render chậm
-let syncInterval: NodeJS.Timeout | null = null;
 onMounted(() => {
-  syncInterval = setInterval(() => {
-    if (pdfObjectRef.value) {
-      syncOverlayHeight();
-    }
-  }, 2000);
-});
-
-onUnmounted(() => {
-  if (syncInterval) clearInterval(syncInterval);
+  if (fileUrl.value) {
+    nextTick(() => renderPDF());
+  }
 });
 </script>
 

@@ -11,6 +11,7 @@
   "dependencies": {
     "@nuxtjs/tailwindcss": "^6.11.4",
     "nuxt": "^3.12.4",
+    "pdfjs-dist": "^5.4.624",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
