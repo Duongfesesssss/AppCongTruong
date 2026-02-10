@@ -16,10 +16,35 @@ export const useApi = () => {
   const token = useState<string | null>("auth-token", () => null);
   const user = useState<unknown | null>("auth-user", () => null);
 
+  // Tránh gọi refresh nhiều lần cùng lúc
+  let refreshPromise: Promise<boolean> | null = null;
+
+  const tryRefreshToken = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`${config.public.apiBase}/auth/refresh`, {
+        method: "POST",
+        credentials: "include", // Gửi httpOnly cookie chứa refresh token
+        headers: { "Content-Type": "application/json" }
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.data?.accessToken) {
+        token.value = data.data.accessToken;
+        if (process.client) {
+          localStorage.setItem("accessToken", data.data.accessToken);
+        }
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
   const request = async <T>(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
-    body?: unknown
+    body?: unknown,
+    _isRetry = false
   ): Promise<T> => {
     const headers: Record<string, string> = {};
     if (token.value) headers.Authorization = `Bearer ${token.value}`;
@@ -47,7 +72,17 @@ export const useApi = () => {
         const code = "error" in payload ? payload.error.code : "";
         const message =
           "error" in payload ? payload.error.message : "Co loi xay ra";
-        if (code === "UNAUTHORIZED") {
+
+        // Nếu 401 và chưa retry → thử refresh token rồi gọi lại
+        if (code === "UNAUTHORIZED" && !_isRetry && path !== "/auth/refresh") {
+          if (!refreshPromise) {
+            refreshPromise = tryRefreshToken().finally(() => { refreshPromise = null; });
+          }
+          const refreshed = await refreshPromise;
+          if (refreshed) {
+            return request<T>(method, path, body, true);
+          }
+          // Refresh thất bại → logout
           token.value = null;
           user.value = null;
           if (process.client) {
