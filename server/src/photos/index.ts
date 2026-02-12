@@ -42,6 +42,39 @@ const getLocalPhotoPath = (storageKey: string) => {
   return path.join(process.cwd(), "server", "uploads", "photos", safeKey);
 };
 
+const isS3KeyNotFoundError = (err: unknown) => {
+  const value = err as { name?: string; message?: string };
+  const name = value?.name ?? "";
+  const message = value?.message ?? "";
+  return (
+    name === "NoSuchKey" ||
+    name === "NotFound" ||
+    message.includes("NoSuchKey") ||
+    message.includes("NotFound") ||
+    message.includes("specified key does not exist")
+  );
+};
+
+const getPhotoS3StreamWithFallback = async (storageKey: string) => {
+  const safeKey = path.basename(storageKey);
+  const candidateKeys = storageKey.startsWith("photos/")
+    ? [storageKey, safeKey]
+    : [storageKey, `photos/${safeKey}`];
+
+  for (const key of candidateKeys) {
+    try {
+      return await getS3Stream(key);
+    } catch (err) {
+      if (isS3KeyNotFoundError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw errors.notFound("File không tồn tại");
+};
+
 router.post(
   "/",
   requireAuth,
@@ -153,7 +186,7 @@ router.get(
 
     if (config.storageType === "s3") {
       // Stream from S3 through server (avoids CORS issues)
-      const stream = await getS3Stream(photo.storageKey);
+      const stream = await getPhotoS3StreamWithFallback(photo.storageKey);
       const safeKey = path.basename(photo.storageKey);
       res.setHeader("Content-Disposition", `inline; filename="${safeKey}"`);
       stream.pipe(res);
