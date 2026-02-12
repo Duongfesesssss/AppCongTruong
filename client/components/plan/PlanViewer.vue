@@ -229,23 +229,23 @@ const normalizedCoords = (event: PointerEvent | MouseEvent): { x: number; y: num
 
 // === Zoom ===
 const zoomIn = () => {
-  zoom.value = Math.min(zoom.value + 0.15, 3);
-  // No re-render needed - canvas already at high resolution, CSS handles scale
+  zoom.value = Math.min(zoom.value + 0.2, 10);
+  // No re-render needed - canvas already at extreme high resolution (10x), CSS handles scale
 };
 const zoomOut = () => {
-  zoom.value = Math.max(zoom.value - 0.15, 0.5);
-  // No re-render needed - canvas already at high resolution, CSS handles scale
+  zoom.value = Math.max(zoom.value - 0.2, 0.3);
+  // No re-render needed - canvas already at extreme high resolution (10x), CSS handles scale
 };
 const resetView = () => {
   zoom.value = 1;
   offset.x = 0;
   offset.y = 0;
-  // No re-render needed - canvas already at high resolution, CSS handles scale
+  // No re-render needed - canvas already at extreme high resolution (10x), CSS handles scale
 };
 const handleWheel = (event: WheelEvent) => {
   const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
-  zoom.value = Math.min(Math.max(zoom.value * factor, 0.5), 3);
-  // No re-render needed - canvas already at high resolution, CSS handles scale
+  zoom.value = Math.min(Math.max(zoom.value * factor, 0.3), 10);
+  // No re-render needed - canvas already at extreme high resolution (10x), CSS handles scale
 };
 
 // === Pan (kéo bản vẽ) ===
@@ -478,9 +478,9 @@ const renderLoadedPdf = async () => {
       480,
       viewportRef.value?.clientWidth ?? container.clientWidth ?? 800
     );
-    // High-resolution rendering: 3-4x for sharpness up to 3x zoom (Procore approach)
-    // outputScale = basePixelRatio × extraScale to support zoom without blur
-    const outputScale = Math.min(window.devicePixelRatio || 1, 2) * 3;
+    // Extreme high-resolution rendering: 10-12x for sharpness up to 1000% zoom
+    // This consumes more memory but ensures sharp display at extreme zoom levels
+    const outputScale = Math.min(window.devicePixelRatio || 1, 2) * 10;
     const renderedCanvases: HTMLCanvasElement[] = [];
 
     for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
