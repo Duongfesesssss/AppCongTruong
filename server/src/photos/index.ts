@@ -35,6 +35,13 @@ const excelUpload = createUploader({
   maxMb: 5
 });
 
+const getLocalPhotoPath = (storageKey: string) => {
+  const safeKey = path.basename(storageKey);
+  const localPath = path.join(process.cwd(), "uploads", "photos", safeKey);
+  if (fs.existsSync(localPath)) return localPath;
+  return path.join(process.cwd(), "server", "uploads", "photos", safeKey);
+};
+
 router.post(
   "/",
   requireAuth,
@@ -152,10 +159,10 @@ router.get(
       stream.pipe(res);
     } else {
       // Serve from local filesystem
-      const safeKey = path.basename(photo.storageKey);
-      const filePath = path.join(process.cwd(), "uploads", "photos", safeKey);
+      const filePath = getLocalPhotoPath(photo.storageKey);
       if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
 
+      const safeKey = path.basename(photo.storageKey);
       res.setHeader("Content-Disposition", `inline; filename="${safeKey}"`);
       fs.createReadStream(filePath).pipe(res);
     }
@@ -188,8 +195,7 @@ router.delete(
       }
     } else {
       // Delete from local filesystem
-      const safeKey = path.basename(photo.storageKey);
-      const filePath = path.join(process.cwd(), "uploads", "photos", safeKey);
+      const filePath = getLocalPhotoPath(photo.storageKey);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }

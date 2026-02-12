@@ -27,6 +27,13 @@ const upload = createUploader({
   maxMb: config.uploadMaxPdfMb
 });
 
+const getLocalDrawingPath = (storageKey: string) => {
+  const safeKey = path.basename(storageKey);
+  const localPath = path.join(process.cwd(), "uploads", "drawings", safeKey);
+  if (fs.existsSync(localPath)) return localPath;
+  return path.join(process.cwd(), "server", "uploads", "drawings", safeKey);
+};
+
 router.post(
   "/",
   requireAuth,
@@ -137,8 +144,7 @@ router.get(
       stream.pipe(res);
     } else {
       // Serve from local filesystem
-      const safeKey = path.basename(drawing.storageKey);
-      const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
+      const filePath = getLocalDrawingPath(drawing.storageKey);
       if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
 
       const stream = fs.createReadStream(filePath);
@@ -212,8 +218,7 @@ router.delete(
         }
       } else {
         // Delete from local filesystem
-        const safeKey = path.basename(drawing.storageKey);
-        const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
+        const filePath = getLocalDrawingPath(drawing.storageKey);
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
         }

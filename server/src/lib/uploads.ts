@@ -47,7 +47,11 @@ export const createUploader = (options: UploadOptions) => {
   }
 
   // For local storage, use disk storage
-  const baseDir = path.join(process.cwd(), "uploads", options.subDir);
+  let baseDir = path.join(process.cwd(), "uploads", options.subDir);
+  // Hỗ trợ chạy server từ root repo (D:/appcongtruong) và từ thư mục server/
+  if (!fs.existsSync(path.dirname(baseDir)) && fs.existsSync(path.join(process.cwd(), "server"))) {
+    baseDir = path.join(process.cwd(), "server", "uploads", options.subDir);
+  }
   ensureDir(baseDir);
 
   const storage = multer.diskStorage({
