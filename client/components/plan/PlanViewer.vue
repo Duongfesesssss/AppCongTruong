@@ -204,7 +204,7 @@ const fileUrl = computed(() => {
 });
 
 const transformStyle = computed(() => ({
-  transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom.value})`,
+  transform: `translate(${offset.x}px, ${offset.y}px)`,
   transformOrigin: "top left"
 }));
 
@@ -228,12 +228,24 @@ const normalizedCoords = (event: PointerEvent | MouseEvent): { x: number; y: num
 };
 
 // === Zoom ===
-const zoomIn = () => { zoom.value = Math.min(zoom.value + 0.15, 3); };
-const zoomOut = () => { zoom.value = Math.max(zoom.value - 0.15, 0.3); };
-const resetView = () => { zoom.value = 1; offset.x = 0; offset.y = 0; };
+const zoomIn = () => {
+  zoom.value = Math.min(zoom.value + 0.15, 3);
+  schedulePdfRender();
+};
+const zoomOut = () => {
+  zoom.value = Math.max(zoom.value - 0.15, 0.3);
+  schedulePdfRender();
+};
+const resetView = () => {
+  zoom.value = 1;
+  offset.x = 0;
+  offset.y = 0;
+  schedulePdfRender();
+};
 const handleWheel = (event: WheelEvent) => {
   const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
   zoom.value = Math.min(Math.max(zoom.value * factor, 0.3), 3);
+  schedulePdfRender(120);
 };
 
 // === Pan (kéo bản vẽ) ===
@@ -378,75 +390,201 @@ const zoneStyle = (shape?: Zone["shape"]) => ({
 });
 
 // === PDF.js rendering ===
+let pdfjsLibPromise: Promise<any> | null = null;
 let currentPdfTask: any = null;
+let currentPdfDoc: any = null;
+let currentPdfUrl = "";
+let renderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let renderingInProgress = false;
+let queuedRender = false;
+let renderToken = 0;
 
-const renderPDF = async () => {
-  if (!process.client) return;
-  const url = fileUrl.value;
-  if (!url) return;
+const getPdfJsLib = async () => {
+  if (!pdfjsLibPromise) {
+    pdfjsLibPromise = import("pdfjs-dist").then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc =
+        `https://cdn.jsdelivr.net/npm/pdfjs-dist@${lib.version}/build/pdf.worker.min.mjs`;
+      return lib;
+    });
+  }
+  return pdfjsLibPromise;
+};
 
-  pdfRendering.value = true;
+const clearRenderedCanvases = (container: HTMLElement) => {
+  const canvases = container.querySelectorAll("canvas");
+  canvases.forEach((canvas) => canvas.remove());
+};
 
-  try {
-    const pdfjsLib = await import('pdfjs-dist');
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-
-    if (currentPdfTask) {
-      try { currentPdfTask.destroy(); } catch {}
+const destroyCurrentPdfTask = () => {
+  if (currentPdfTask) {
+    try {
+      currentPdfTask.destroy();
+    } catch {
+      // ignore
     }
-
-    currentPdfTask = pdfjsLib.getDocument(url);
-    const pdf = await currentPdfTask.promise;
-
-    const container = pdfContainerRef.value;
-    if (!container) return;
-
-    // Xoá canvas cũ (giữ lại loading indicator nếu có)
-    const canvases = container.querySelectorAll('canvas');
-    canvases.forEach(c => c.remove());
-
-    const containerWidth = container.clientWidth || 800;
-    const pixelRatio = window.devicePixelRatio || 1;
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const naturalViewport = page.getViewport({ scale: 1 });
-      const scale = containerWidth / naturalViewport.width;
-      const viewport = page.getViewport({ scale });
-
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.floor(viewport.width * pixelRatio);
-      canvas.height = Math.floor(viewport.height * pixelRatio);
-      canvas.style.width = `${Math.floor(viewport.width)}px`;
-      canvas.style.height = `${Math.floor(viewport.height)}px`;
-      canvas.style.display = 'block';
-
-      container.appendChild(canvas);
-
-      const ctx = canvas.getContext('2d')!;
-      ctx.scale(pixelRatio, pixelRatio);
-
-      await page.render({ canvasContext: ctx, viewport }).promise;
-    }
-  } catch (err: any) {
-    if (err?.name !== 'RenderingCancelledException') {
-      console.error('PDF render error:', err);
-    }
-  } finally {
-    pdfRendering.value = false;
+    currentPdfTask = null;
   }
 };
 
-// Watch drawing changes để render lại PDF
-watch(() => props.drawing, () => {
-  nextTick(() => renderPDF());
-});
+const destroyCurrentPdfDoc = async () => {
+  if (currentPdfDoc) {
+    try {
+      await currentPdfDoc.destroy();
+    } catch {
+      // ignore
+    }
+    currentPdfDoc = null;
+  }
+};
+
+const loadPdfDocument = async () => {
+  if (!process.client) return;
+  const url = fileUrl.value;
+  if (!url) {
+    currentPdfUrl = "";
+    destroyCurrentPdfTask();
+    await destroyCurrentPdfDoc();
+    const container = pdfContainerRef.value;
+    if (container) clearRenderedCanvases(container);
+    return;
+  }
+  if (url === currentPdfUrl && currentPdfDoc) return;
+
+  const pdfjsLib = await getPdfJsLib();
+  destroyCurrentPdfTask();
+  await destroyCurrentPdfDoc();
+
+  currentPdfTask = pdfjsLib.getDocument(url);
+  currentPdfDoc = await currentPdfTask.promise;
+  currentPdfUrl = url;
+};
+
+const renderLoadedPdf = async () => {
+  const container = pdfContainerRef.value;
+  if (!container || !currentPdfDoc) return;
+
+  if (renderingInProgress) {
+    queuedRender = true;
+    return;
+  }
+
+  renderingInProgress = true;
+  pdfRendering.value = true;
+  const localRenderToken = ++renderToken;
+
+  try {
+    const doc = currentPdfDoc;
+    const targetWidth = Math.max(
+      480,
+      viewportRef.value?.clientWidth ?? container.clientWidth ?? 800
+    );
+    const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+    const renderedCanvases: HTMLCanvasElement[] = [];
+
+    for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
+      const page = await doc.getPage(pageNum);
+      const naturalViewport = page.getViewport({ scale: 1 });
+      const fitScale = targetWidth / naturalViewport.width;
+      const viewport = page.getViewport({ scale: fitScale * zoom.value });
+
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
+      canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
+      canvas.style.width = `${Math.floor(viewport.width)}px`;
+      canvas.style.height = `${Math.floor(viewport.height)}px`;
+      canvas.style.display = "block";
+
+      const context = canvas.getContext("2d");
+      if (!context) continue;
+
+      await page.render({
+        canvasContext: context,
+        viewport,
+        transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0]
+      }).promise;
+
+      renderedCanvases.push(canvas);
+    }
+
+    if (localRenderToken !== renderToken) return;
+    clearRenderedCanvases(container);
+    renderedCanvases.forEach((canvas) => container.appendChild(canvas));
+  } catch (err: any) {
+    if (err?.name !== "RenderingCancelledException") {
+      console.error("PDF render error:", err);
+    }
+  } finally {
+    renderingInProgress = false;
+    pdfRendering.value = false;
+
+    if (queuedRender) {
+      queuedRender = false;
+      void renderLoadedPdf();
+    }
+  }
+};
+
+const schedulePdfRender = (delayMs = 0) => {
+  if (renderDebounceTimer) {
+    clearTimeout(renderDebounceTimer);
+    renderDebounceTimer = null;
+  }
+
+  if (delayMs <= 0) {
+    void renderLoadedPdf();
+    return;
+  }
+
+  renderDebounceTimer = setTimeout(() => {
+    renderDebounceTimer = null;
+    void renderLoadedPdf();
+  }, delayMs);
+};
+
+const reloadPdfAndRender = async () => {
+  try {
+    await loadPdfDocument();
+    await renderLoadedPdf();
+  } catch (err: any) {
+    if (err?.name !== "RenderingCancelledException") {
+      console.error("PDF load error:", err);
+    }
+  }
+};
+
+const handleWindowResize = () => {
+  schedulePdfRender(160);
+};
+
+watch(
+  () => props.drawing?._id || props.drawing?.id || "",
+  () => {
+    zoom.value = 1;
+    offset.x = 0;
+    offset.y = 0;
+    nextTick(() => {
+      void reloadPdfAndRender();
+    });
+  }
+);
 
 onMounted(() => {
+  window.addEventListener("resize", handleWindowResize);
   if (fileUrl.value) {
-    nextTick(() => renderPDF());
+    nextTick(() => {
+      void reloadPdfAndRender();
+    });
   }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", handleWindowResize);
+  if (renderDebounceTimer) {
+    clearTimeout(renderDebounceTimer);
+    renderDebounceTimer = null;
+  }
+  destroyCurrentPdfTask();
+  void destroyCurrentPdfDoc();
 });
 </script>
 
