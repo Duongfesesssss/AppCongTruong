@@ -162,7 +162,6 @@
 import { useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import { useProjectTree } from "~/composables/api/useProjectTree";
-import * as XLSX from "xlsx";
 
 export type CreateFormType = "project" | "building" | "floor" | "discipline" | "drawing" | "task";
 
@@ -231,17 +230,23 @@ const triggerRoomImport = () => {
   roomImportInput.value?.click();
 };
 
-const downloadRoomTemplate = () => {
-  const rows = [
-    { roomCode: "P101", roomName: "Phòng 101", building: "Toà A", floor: "Tầng 1" },
-    { roomCode: "P102", roomName: "Phòng 102", building: "Toà A", floor: "Tầng 1" },
-    { roomCode: "KHO-01", roomName: "Kho vật tư", building: "Toà B", floor: "Tầng 2" }
-  ];
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Rooms");
-  XLSX.writeFile(workbook, "mau-import-phong.xlsx");
-  toast.push("Đã tải file mẫu import phòng", "success");
+const downloadRoomTemplate = async () => {
+  if (!process.client) return;
+  try {
+    const XLSX = await import("xlsx");
+    const rows = [
+      { roomCode: "P101", roomName: "Phòng 101", building: "Toà A", floor: "Tầng 1" },
+      { roomCode: "P102", roomName: "Phòng 102", building: "Toà A", floor: "Tầng 1" },
+      { roomCode: "KHO-01", roomName: "Kho vật tư", building: "Toà B", floor: "Tầng 2" }
+    ];
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Rooms");
+    XLSX.writeFile(workbook, "mau-import-phong.xlsx");
+    toast.push("Đã tải file mẫu import phòng", "success");
+  } catch {
+    toast.push("Không thể tạo file mẫu", "error");
+  }
 };
 
 const handleRoomImport = async (event: Event) => {

@@ -247,7 +247,6 @@
 import { useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import { useAnnotationHistory } from "~/composables/state/useAnnotationHistory";
-import * as XLSX from "xlsx";
 
 type Line = {
   // === Tọa độ vẽ ===
@@ -1069,51 +1068,58 @@ const triggerImport = () => {
   }
 };
 
-const downloadExcelTemplate = () => {
-  // Tạo file Excel mẫu với SheetJS
-  // Dữ liệu mẫu
-  const templateData = [
-    {
-      x1: 0.1,
-      y1: 0.2,
-      x2: 0.3,
-      y2: 0.2,
-      realValue: 5.5,
-      unit: "m",
-      name: "Chiều dài tường",
-      category: "Kết cấu",
-      room: "Phòng khách",
-      notes: "Tường bê tông",
-      color: "#ef4444",
-      width: 2
-    },
-    {
-      x1: 0.4,
-      y1: 0.5,
-      x2: 0.4,
-      y2: 0.7,
-      realValue: 3.2,
-      unit: "m",
-      name: "Chiều cao cột",
-      category: "Kết cấu",
-      room: "Phòng ngủ",
-      notes: "",
-      color: "#3b82f6",
-      width: 2
-    }
-  ];
+const downloadExcelTemplate = async () => {
+  if (!process.client) return;
+  try {
+    const XLSX = await import("xlsx");
 
-  // Tạo worksheet
-  const ws = XLSX.utils.json_to_sheet(templateData);
+    // Tạo file Excel mẫu với SheetJS
+    // Dữ liệu mẫu
+    const templateData = [
+      {
+        x1: 0.1,
+        y1: 0.2,
+        x2: 0.3,
+        y2: 0.2,
+        realValue: 5.5,
+        unit: "m",
+        name: "Chiều dài tường",
+        category: "Kết cấu",
+        room: "Phòng khách",
+        notes: "Tường bê tông",
+        color: "#ef4444",
+        width: 2
+      },
+      {
+        x1: 0.4,
+        y1: 0.5,
+        x2: 0.4,
+        y2: 0.7,
+        realValue: 3.2,
+        unit: "m",
+        name: "Chiều cao cột",
+        category: "Kết cấu",
+        room: "Phòng ngủ",
+        notes: "",
+        color: "#3b82f6",
+        width: 2
+      }
+    ];
 
-  // Tạo workbook
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Mẫu đo đạc");
+    // Tạo worksheet
+    const ws = XLSX.utils.json_to_sheet(templateData);
 
-  // Download file
-  XLSX.writeFile(wb, "mau-do-dac.xlsx");
+    // Tạo workbook
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Mẫu đo đạc");
 
-  toast.push("Đã tải xuống file mẫu Excel", "success");
+    // Download file
+    XLSX.writeFile(wb, "mau-do-dac.xlsx");
+
+    toast.push("Đã tải xuống file mẫu Excel", "success");
+  } catch {
+    toast.push("Không thể tạo file mẫu Excel", "error");
+  }
 };
 
 const handleImportExcel = async (event: Event) => {
