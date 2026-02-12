@@ -9,7 +9,9 @@
     "test": "vitest run",
     "db:init": "tsx src/scripts/init-db.ts",
     "db:seed": "tsx src/scripts/seed-sample.ts",
-    "db:cleanup": "tsx src/scripts/cleanup-sample.ts"
+    "db:cleanup": "tsx src/scripts/cleanup-sample.ts",
+    "storage:audit": "tsx src/scripts/audit-s3-missing.ts",
+    "storage:restore": "tsx src/scripts/restore-s3-missing-from-local.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.985.0",
