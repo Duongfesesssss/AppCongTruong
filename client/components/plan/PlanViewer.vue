@@ -152,9 +152,6 @@ type Zone = {
   shape?: { x?: number; y?: number; width?: number; height?: number };
 };
 
-// Max resolution scale: Canvas always rendered at 5x base size for maximum sharpness
-const MAX_RESOLUTION_SCALE = 5;
-
 const props = defineProps<{
   drawing: Drawing;
   pins: Pin[];
@@ -207,7 +204,7 @@ const fileUrl = computed(() => {
 });
 
 const transformStyle = computed(() => ({
-  transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom.value / MAX_RESOLUTION_SCALE})`,
+  transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom.value})`,
   transformOrigin: "top left"
 }));
 
@@ -232,19 +229,23 @@ const normalizedCoords = (event: PointerEvent | MouseEvent): { x: number; y: num
 
 // === Zoom ===
 const zoomIn = () => {
-  zoom.value = Math.min(zoom.value + 0.15, MAX_RESOLUTION_SCALE);
+  zoom.value = Math.min(zoom.value + 0.15, 3);
+  // No re-render needed - canvas already at high resolution, CSS handles scale
 };
 const zoomOut = () => {
-  zoom.value = Math.max(zoom.value - 0.15, 0.2);
+  zoom.value = Math.max(zoom.value - 0.15, 0.5);
+  // No re-render needed - canvas already at high resolution, CSS handles scale
 };
 const resetView = () => {
   zoom.value = 1;
   offset.x = 0;
   offset.y = 0;
+  // No re-render needed - canvas already at high resolution, CSS handles scale
 };
 const handleWheel = (event: WheelEvent) => {
   const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
-  zoom.value = Math.min(Math.max(zoom.value * factor, 0.2), MAX_RESOLUTION_SCALE);
+  zoom.value = Math.min(Math.max(zoom.value * factor, 0.5), 3);
+  // No re-render needed - canvas already at high resolution, CSS handles scale
 };
 
 // === Pan (kéo bản vẽ) ===
@@ -477,15 +478,17 @@ const renderLoadedPdf = async () => {
       480,
       viewportRef.value?.clientWidth ?? container.clientWidth ?? 800
     );
-    const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+    // High-resolution rendering: 3-4x for sharpness up to 3x zoom (Procore approach)
+    // outputScale = basePixelRatio × extraScale to support zoom without blur
+    const outputScale = Math.min(window.devicePixelRatio || 1, 2) * 3;
     const renderedCanvases: HTMLCanvasElement[] = [];
 
     for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
       const page = await doc.getPage(pageNum);
       const naturalViewport = page.getViewport({ scale: 1 });
       const fitScale = targetWidth / naturalViewport.width;
-      // Render at max resolution for sharpness - zoom is handled by CSS transform
-      const viewport = page.getViewport({ scale: fitScale * MAX_RESOLUTION_SCALE });
+      // Render at BASE resolution (zoom handled by CSS for smooth zoom)
+      const viewport = page.getViewport({ scale: fitScale });
 
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
@@ -592,5 +595,16 @@ onBeforeUnmount(() => {
 <style scoped>
 .btn {
   @apply rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100;
+}
+
+/* Optimize canvas rendering quality */
+canvas {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  image-rendering: high-quality;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 </style>
