@@ -152,6 +152,9 @@ type Zone = {
   shape?: { x?: number; y?: number; width?: number; height?: number };
 };
 
+// Max resolution scale: Canvas always rendered at 5x base size for maximum sharpness
+const MAX_RESOLUTION_SCALE = 5;
+
 const props = defineProps<{
   drawing: Drawing;
   pins: Pin[];
@@ -204,7 +207,7 @@ const fileUrl = computed(() => {
 });
 
 const transformStyle = computed(() => ({
-  transform: `translate(${offset.x}px, ${offset.y}px)`,
+  transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom.value / MAX_RESOLUTION_SCALE})`,
   transformOrigin: "top left"
 }));
 
@@ -229,23 +232,19 @@ const normalizedCoords = (event: PointerEvent | MouseEvent): { x: number; y: num
 
 // === Zoom ===
 const zoomIn = () => {
-  zoom.value = Math.min(zoom.value + 0.15, 3);
-  schedulePdfRender();
+  zoom.value = Math.min(zoom.value + 0.15, MAX_RESOLUTION_SCALE);
 };
 const zoomOut = () => {
-  zoom.value = Math.max(zoom.value - 0.15, 0.3);
-  schedulePdfRender();
+  zoom.value = Math.max(zoom.value - 0.15, 0.2);
 };
 const resetView = () => {
   zoom.value = 1;
   offset.x = 0;
   offset.y = 0;
-  schedulePdfRender();
 };
 const handleWheel = (event: WheelEvent) => {
   const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
-  zoom.value = Math.min(Math.max(zoom.value * factor, 0.3), 3);
-  schedulePdfRender(120);
+  zoom.value = Math.min(Math.max(zoom.value * factor, 0.2), MAX_RESOLUTION_SCALE);
 };
 
 // === Pan (kéo bản vẽ) ===
@@ -485,7 +484,8 @@ const renderLoadedPdf = async () => {
       const page = await doc.getPage(pageNum);
       const naturalViewport = page.getViewport({ scale: 1 });
       const fitScale = targetWidth / naturalViewport.width;
-      const viewport = page.getViewport({ scale: fitScale * zoom.value });
+      // Render at max resolution for sharpness - zoom is handled by CSS transform
+      const viewport = page.getViewport({ scale: fitScale * MAX_RESOLUTION_SCALE });
 
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
@@ -493,6 +493,7 @@ const renderLoadedPdf = async () => {
       canvas.style.width = `${Math.floor(viewport.width)}px`;
       canvas.style.height = `${Math.floor(viewport.height)}px`;
       canvas.style.display = "block";
+      canvas.style.imageRendering = "high-quality";
 
       const context = canvas.getContext("2d");
       if (!context) continue;
