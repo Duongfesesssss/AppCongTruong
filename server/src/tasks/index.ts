@@ -20,6 +20,7 @@ const router = Router();
 
 const sanitizeOptional = (value?: string) => (value ? sanitizeText(value) : undefined);
 const sanitizeNotes = (notes?: string[]) => notes?.map((note) => sanitizeText(note)) ?? undefined;
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 router.post(
   "/",
@@ -54,7 +55,21 @@ router.post(
       if (body.category) task.category = body.category;
       if (body.description !== undefined) task.description = sanitizeOptional(body.description);
       if (body.roomName !== undefined) task.roomName = sanitizeOptional(body.roomName);
-      if (body.pinName !== undefined) task.pinName = sanitizeOptional(body.pinName);
+      if (body.pinName !== undefined) {
+        // #22 Check duplicate pinName on update (exclude self)
+        const trimmedPinName = body.pinName?.trim();
+        if (trimmedPinName) {
+          const duplicate = await TaskModel.findOne({
+            projectId: task.projectId,
+            pinName: { $regex: new RegExp(`^${escapeRegExp(trimmedPinName)}$`, "i") },
+            _id: { $ne: task._id }
+          });
+          if (duplicate) {
+            throw errors.conflict(`Tên Pin "${body.pinName}" đã tồn tại trong dự án (mã: ${duplicate.pinCode})`);
+          }
+        }
+        task.pinName = sanitizeOptional(body.pinName);
+      }
       if (body.gewerk !== undefined) task.gewerk = sanitizeOptional(body.gewerk);
       if (body.notes) task.notes = sanitizeNotes(body.notes) ?? [];
 
@@ -84,6 +99,18 @@ router.post(
       { new: true, upsert: true }
     );
 
+    // #22 Check duplicate pinName within the same project
+    const trimmedPinName = body.pinName?.trim();
+    if (trimmedPinName) {
+      const duplicate = await TaskModel.findOne({
+        projectId: project._id,
+        pinName: { $regex: new RegExp(`^${escapeRegExp(trimmedPinName)}$`, "i") }
+      });
+      if (duplicate) {
+        throw errors.conflict(`Tên Pin "${body.pinName}" đã tồn tại trong dự án (mã: ${duplicate.pinCode})`);
+      }
+    }
+
     const gewerkCode = toCode(body.gewerk ?? "NA", 2);
     const pinCode = formatPinCode(project.code, building.code, floor.code, gewerkCode, counter.seq);
 
@@ -106,6 +133,37 @@ router.post(
     });
 
     return sendSuccess(res, task, {}, 201);
+  })
+);
+
+// #13/#14 Pin name suggestions for autofill
+router.get(
+  "/pin-suggestions",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const drawingId = req.query.drawingId as string | undefined;
+    if (!drawingId) return sendSuccess(res, []);
+
+    const drawing = await DrawingModel.findById(drawingId);
+    if (!drawing) return sendSuccess(res, []);
+
+    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
+    if (!project) return sendSuccess(res, []);
+
+    const tasks = await TaskModel.find(
+      { projectId: project._id, pinName: { $exists: true, $ne: "" } },
+      { pinName: 1, pinCode: 1, roomName: 1, gewerk: 1, status: 1, category: 1, description: 1, _id: 0 }
+    ).sort({ createdAt: -1 }).limit(100).lean();
+
+    // Deduplicate by pinName
+    const seen = new Set<string>();
+    const suggestions = tasks.filter((t) => {
+      if (!t.pinName || seen.has(t.pinName)) return false;
+      seen.add(t.pinName);
+      return true;
+    });
+
+    return sendSuccess(res, suggestions);
   })
 );
 

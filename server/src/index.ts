@@ -25,6 +25,7 @@ import photoRoutes from "./photos";
 import templateRoutes from "./templates";
 import zoneRoutes from "./zones";
 import reportRoutes from "./reports";
+import roomRoutes from "./rooms";
 import { seedAdminUser } from "./auth/seed-admin";
 
 const app = express();
@@ -96,6 +97,7 @@ app.use("/api/photos", photoRoutes);
 app.use("/api/templates", templateRoutes);
 app.use("/api/zones", zoneRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/rooms", roomRoutes);
 
 app.use((req, res) => {
   sendError(res, errors.notFound(`Khong tim thay ${req.path}`));

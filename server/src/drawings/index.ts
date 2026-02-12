@@ -55,12 +55,19 @@ router.post(
     // Handle file upload (S3 or local)
     const storageKey = await handleFileUpload(req.file, "drawings");
 
+    const lastDrawing = await DrawingModel.findOne({ disciplineId: discipline._id })
+      .sort({ sortIndex: -1, createdAt: -1 })
+      .select("sortIndex")
+      .lean();
+    const nextSortIndex = (lastDrawing?.sortIndex ?? 0) + 1;
+
     const drawing = await DrawingModel.create({
       projectId: project._id,
       buildingId: building._id,
       floorId: floor._id,
       disciplineId: discipline._id,
       name: sanitizeText(name),
+      sortIndex: nextSortIndex,
       originalName: req.file.originalname,
       storageKey,
       mimeType: req.file.mimetype,
@@ -83,7 +90,7 @@ router.get(
     const filter: Record<string, unknown> = { projectId: { $in: projectIds } };
     if (req.query.disciplineId) filter.disciplineId = req.query.disciplineId;
 
-    const drawings = await DrawingModel.find(filter).sort({ createdAt: -1 });
+    const drawings = await DrawingModel.find(filter).sort({ sortIndex: 1, createdAt: 1 });
     return sendSuccess(res, drawings);
   })
 );
@@ -157,6 +164,25 @@ router.get(
   })
 );
 
+router.patch(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { name } = req.body as { name?: string };
+    if (!name?.trim()) throw errors.validation("Tên không được để trống");
+
+    const drawing = await DrawingModel.findById(req.params.id);
+    if (!drawing) throw errors.notFound("Drawing không tồn tại");
+
+    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
+    if (!project) throw errors.notFound("Không có quyền");
+
+    drawing.name = sanitizeText(name);
+    await drawing.save();
+    return sendSuccess(res, drawing);
+  })
+);
+
 router.delete(
   "/:id",
   requireAuth,
@@ -169,21 +195,28 @@ router.delete(
     const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Drawing không tồn tại hoặc không có quyền");
 
-    // Delete file from storage
-    if (config.storageType === "s3") {
-      // Delete from S3
-      try {
-        await deleteFromS3(drawing.storageKey);
-      } catch (err) {
-        // Log error but don't fail the request
-        console.error("Failed to delete file from S3:", err);
-      }
-    } else {
-      // Delete from local filesystem
-      const safeKey = path.basename(drawing.storageKey);
-      const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    // Chỉ xoá file vật lý khi không còn drawing nào khác dùng chung storageKey
+    const storageRefCount = await DrawingModel.countDocuments({
+      storageKey: drawing.storageKey,
+      _id: { $ne: drawing._id }
+    });
+
+    if (storageRefCount === 0) {
+      if (config.storageType === "s3") {
+        // Delete from S3
+        try {
+          await deleteFromS3(drawing.storageKey);
+        } catch (err) {
+          // Log error but don't fail the request
+          console.error("Failed to delete file from S3:", err);
+        }
+      } else {
+        // Delete from local filesystem
+        const safeKey = path.basename(drawing.storageKey);
+        const filePath = path.join(process.cwd(), "uploads", "drawings", safeKey);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
       }
     }
 

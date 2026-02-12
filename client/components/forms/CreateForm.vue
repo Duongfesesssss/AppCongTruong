@@ -51,21 +51,15 @@
 
       <!-- Task -->
       <template v-else-if="type === 'task'">
-        <!-- Hiển thị vị trí pin đã chọn -->
-        <div class="flex items-center gap-2 rounded-lg bg-brand-50 border border-brand-200 p-2">
-          <svg class="h-4 w-4 shrink-0 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          <span class="text-xs text-brand-700">
-            Vị trí pin: X={{ form.pinX.toFixed(2) }}, Y={{ form.pinY.toFixed(2) }}
-          </span>
-        </div>
         <div>
           <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tên Pin</label>
-          <input v-model="form.pinName" type="text" class="input" placeholder="VD: Điểm đo 1" />
+          <input v-model="form.pinName" type="text" class="input" placeholder="VD: Điểm đo 1" list="pin-suggestions" @change="onPinNameSelect" />
+          <datalist id="pin-suggestions">
+            <option v-for="s in pinSuggestions" :key="s.pinName" :value="s.pinName">
+              {{ s.pinCode }} · {{ s.roomName || '' }}
+            </option>
+          </datalist>
+          <p v-if="pinSuggestions.length" class="mt-1 text-[11px] text-slate-400">Gợi ý từ các pin đã tạo trong dự án</p>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -89,13 +83,50 @@
           </div>
         </div>
         <div>
-          <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Phòng</label>
-          <input v-model="form.roomName" type="text" class="input" placeholder="VD: Phòng khách" />
-        </div>
-        <div>
-          <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Bộ phận thi công</label>
-          <input v-model="form.gewerk" type="text" class="input" placeholder="VD: EL (Điện), HE (Sưởi), SA (Vệ sinh)..." />
-          <p class="mt-1 text-[11px] text-slate-400">Viết tắt ngành nghề, dùng để sinh mã pin</p>
+          <div class="mb-1 flex items-center justify-between gap-2">
+            <label class="block text-xs font-medium uppercase tracking-wide text-slate-500">Phòng</label>
+            <input
+              ref="roomImportInput"
+              type="file"
+              accept=".xlsx,.xls"
+              class="hidden"
+              @change="handleRoomImport"
+            />
+            <div class="flex items-center gap-1">
+              <button
+                type="button"
+                class="rounded border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100"
+                @click="downloadRoomTemplate"
+              >
+                Tải mẫu
+              </button>
+              <button
+                type="button"
+                class="rounded border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+                :disabled="importingRooms"
+                @click="triggerRoomImport"
+              >
+                {{ importingRooms ? "Đang import..." : "Import Excel" }}
+              </button>
+            </div>
+          </div>
+          <input
+            v-model="form.roomName"
+            type="text"
+            class="input"
+            placeholder="VD: Phòng khách"
+            list="room-suggestions"
+          />
+          <datalist id="room-suggestions">
+            <option
+              v-for="room in roomSuggestions"
+              :key="`${room.roomName}-${room.roomCode || ''}`"
+              :value="room.roomName"
+            >
+              {{ room.roomCode ? `${room.roomCode} · ${room.roomName}` : room.roomName }}
+            </option>
+          </datalist>
+          <p v-if="importingRooms" class="mt-1 text-[11px] text-brand-600">Đang xử lý file Excel phòng...</p>
         </div>
         <div>
           <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Mô tả</label>
@@ -131,6 +162,7 @@
 import { useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import { useProjectTree } from "~/composables/api/useProjectTree";
+import * as XLSX from "xlsx";
 
 export type CreateFormType = "project" | "building" | "floor" | "discipline" | "drawing" | "task";
 
@@ -155,12 +187,148 @@ const submitting = ref(false);
 const errorMsg = ref("");
 const uploadFile = ref<File | null>(null);
 
+// #13/#14 Pin suggestions for autofill
+type PinSuggestion = {
+  pinName: string;
+  pinCode: string;
+  roomName?: string;
+  status?: string;
+  category?: string;
+  description?: string;
+};
+const pinSuggestions = ref<PinSuggestion[]>([]);
+type RoomSuggestion = { roomName: string; roomCode?: string };
+const roomSuggestions = ref<RoomSuggestion[]>([]);
+const roomImportInput = ref<HTMLInputElement | null>(null);
+const importingRooms = ref(false);
+
+const taskDraftKey = computed(() => `task-form-draft:${props.parentId || "unknown"}`);
+
+const fetchPinSuggestions = async () => {
+  if (props.type !== "task" || !props.parentId) { pinSuggestions.value = []; return; }
+  try {
+    const data = await api.get<PinSuggestion[]>(`/tasks/pin-suggestions?drawingId=${props.parentId}`);
+    pinSuggestions.value = data || [];
+  } catch { pinSuggestions.value = []; }
+};
+
+const fetchRoomSuggestions = async () => {
+  if (props.type !== "task" || !props.parentId) {
+    roomSuggestions.value = [];
+    return;
+  }
+
+  try {
+    const data = await api.get<RoomSuggestion[]>(`/rooms/suggestions?drawingId=${props.parentId}`);
+    roomSuggestions.value = data || [];
+  } catch {
+    roomSuggestions.value = [];
+  }
+};
+
+const triggerRoomImport = () => {
+  if (props.type !== "task") return;
+  roomImportInput.value?.click();
+};
+
+const downloadRoomTemplate = () => {
+  const rows = [
+    { roomCode: "P101", roomName: "Phòng 101", building: "Toà A", floor: "Tầng 1" },
+    { roomCode: "P102", roomName: "Phòng 102", building: "Toà A", floor: "Tầng 1" },
+    { roomCode: "KHO-01", roomName: "Kho vật tư", building: "Toà B", floor: "Tầng 2" }
+  ];
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Rooms");
+  XLSX.writeFile(workbook, "mau-import-phong.xlsx");
+  toast.push("Đã tải file mẫu import phòng", "success");
+};
+
+const handleRoomImport = async (event: Event) => {
+  if (!props.parentId) return;
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  importingRooms.value = true;
+  try {
+    const formData = new FormData();
+    formData.append("drawingId", props.parentId);
+    formData.append("file", file);
+    const result = await api.upload<{ imported: number; skipped: number; totalRows: number }>("/rooms/import-excel", formData);
+    toast.push(`Import phòng: ${result.imported}/${result.totalRows} dòng`, "success");
+    await fetchRoomSuggestions();
+  } catch (err) {
+    toast.push((err as Error).message || "Lỗi import phòng", "error");
+  } finally {
+    importingRooms.value = false;
+    input.value = "";
+  }
+};
+
+const saveTaskDraft = () => {
+  if (!process.client || props.type !== "task") return;
+  const draft = {
+    pinName: form.pinName,
+    roomName: form.roomName,
+    description: form.description,
+    status: form.status,
+    category: form.category
+  };
+  try {
+    localStorage.setItem(taskDraftKey.value, JSON.stringify(draft));
+  } catch {
+    // Ignore localStorage errors
+  }
+};
+
+const clearTaskDraft = () => {
+  if (!process.client || props.type !== "task") return;
+  try {
+    localStorage.removeItem(taskDraftKey.value);
+  } catch {
+    // Ignore localStorage errors
+  }
+};
+
+const restoreTaskDraft = () => {
+  if (!process.client || props.type !== "task") return;
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(taskDraftKey.value);
+  } catch {
+    raw = null;
+  }
+  if (!raw) return;
+
+  try {
+    const draft = JSON.parse(raw) as Partial<typeof form>;
+    form.pinName = draft.pinName || "";
+    form.roomName = draft.roomName || "";
+    form.description = draft.description || "";
+    form.status = (draft.status as string) || "open";
+    form.category = (draft.category as string) || "quality";
+  } catch {
+    // Ignore malformed draft
+  }
+};
+
+const onPinNameSelect = () => {
+  // Auto-fill full form from matching suggestion
+  const match = pinSuggestions.value.find((s) => s.pinName === form.pinName);
+  if (match) {
+    if (match.roomName && !form.roomName) form.roomName = match.roomName;
+    if (match.status) form.status = match.status;
+    if (match.category) form.category = match.category;
+    if (match.description && !form.description) form.description = match.description;
+  }
+};
+
 const form = reactive({
   name: "",
   description: "",
   pinName: "",
   roomName: "",
-  gewerk: "",
   status: "open",
   category: "quality",
   pinX: 0.5,
@@ -191,7 +359,6 @@ const resetForm = () => {
   form.description = "";
   form.pinName = "";
   form.roomName = "";
-  form.gewerk = "";
   form.status = "open";
   form.category = "quality";
   form.pinX = props.initialPinX ?? 0.5;
@@ -254,7 +421,6 @@ const handleSubmit = async () => {
           drawingId: props.parentId,
           pinName: form.pinName || undefined,
           roomName: form.roomName || undefined,
-          gewerk: form.gewerk || undefined,
           description: form.description || undefined,
           status: form.status,
           category: form.category,
@@ -265,6 +431,9 @@ const handleSubmit = async () => {
     }
 
     toast.push(`Tạo ${props.type} thành công`, "success");
+    if (props.type === "task") {
+      clearTaskDraft();
+    }
     await fetchTree();
     resetForm();
     emit("created", result);
@@ -283,6 +452,17 @@ watch(() => props.show, (newVal) => {
   } else if (props.type === "task") {
     form.pinX = props.initialPinX ?? 0.5;
     form.pinY = props.initialPinY ?? 0.5;
+    fetchPinSuggestions();
+    fetchRoomSuggestions();
+    restoreTaskDraft();
   }
 });
+
+watch(
+  () => [form.pinName, form.roomName, form.description, form.status, form.category, props.show],
+  () => {
+    if (!props.show || props.type !== "task") return;
+    saveTaskDraft();
+  }
+);
 </script>

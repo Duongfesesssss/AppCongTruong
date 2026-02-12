@@ -223,7 +223,9 @@ router.post(
 
     try {
       // Read Excel file
-      const workbook = XLSX.readFile(req.file.path);
+      const workbook = req.file.buffer
+        ? XLSX.read(req.file.buffer, { type: "buffer" })
+        : XLSX.readFile(req.file.path);
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(worksheet);
@@ -292,7 +294,9 @@ router.post(
       await photo.save();
 
       // Clean up temp file
-      fs.unlinkSync(req.file.path);
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
 
       return sendSuccess(res, {
         photo,
@@ -301,7 +305,7 @@ router.post(
       });
     } catch (err) {
       // Clean up temp file on error
-      if (fs.existsSync(req.file.path)) {
+      if (req.file.path && fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
       }
       throw err;

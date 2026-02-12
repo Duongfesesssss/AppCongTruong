@@ -50,6 +50,9 @@
         @select="handleSelect"
         @add-child="handleAddChild"
         @delete="handleDelete"
+        @rename="handleRename"
+        @reorder="handleReorder"
+        @duplicate="handleDuplicate"
       />
     </div>
 
@@ -135,6 +138,51 @@ const handleAddChild = (payload: { parentId: string; parentType: string; childTy
   createFormParentId.value = payload.parentId;
   createFormType.value = payload.childType as CreateFormType;
   showCreateForm.value = true;
+};
+
+const handleRename = async (payload: { nodeId: string; nodeType: string; newName: string }) => {
+  const { nodeId, nodeType, newName } = payload;
+  const endpoints: Record<string, string> = {
+    project: `/projects/${nodeId}`,
+    building: `/buildings/${nodeId}`,
+    floor: `/floors/${nodeId}`,
+    discipline: `/disciplines/${nodeId}`,
+    drawing: `/drawings/${nodeId}`
+  };
+  const endpoint = endpoints[nodeType];
+  if (!endpoint) return;
+
+  try {
+    await api.patch(endpoint, { name: newName });
+    toast.push("Đã đổi tên", "success");
+    await fetchTree();
+  } catch (err) {
+    toast.push((err as Error).message || "Lỗi khi đổi tên", "error");
+    await fetchTree(); // Refresh to revert UI
+  }
+};
+
+const handleReorder = async (payload: { nodeId: string; nodeType: string; direction: "up" | "down" }) => {
+  try {
+    const res = await api.post<{ moved: boolean }>("/project-tree/reorder", payload);
+    if (!res.moved) {
+      toast.push("Không thể di chuyển thêm", "info");
+      return;
+    }
+    await fetchTree();
+  } catch (err) {
+    toast.push((err as Error).message || "Lỗi khi sắp xếp", "error");
+  }
+};
+
+const handleDuplicate = async (payload: { nodeId: string; nodeType: string }) => {
+  try {
+    await api.post("/project-tree/duplicate", payload);
+    toast.push("Đã nhân bản node", "success");
+    await fetchTree();
+  } catch (err) {
+    toast.push((err as Error).message || "Lỗi khi nhân bản", "error");
+  }
 };
 
 const handleDelete = (payload: { nodeId: string; nodeType: string; nodeName: string }) => {

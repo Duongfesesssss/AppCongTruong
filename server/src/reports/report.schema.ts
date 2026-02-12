@@ -10,3 +10,11 @@ export const exportExcelSchema = z.object({
     to: z.string().datetime().optional()
   })
 });
+
+export const exportImagesSchema = z.object({
+  query: z.object({
+    drawingId: objectIdSchema,
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional()
+  })
+});

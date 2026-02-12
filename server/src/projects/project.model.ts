@@ -4,6 +4,7 @@ export type ProjectDocument = {
   userId: Types.ObjectId;
   name: string;
   code: string;
+  sortIndex: number;
   description?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -14,6 +15,7 @@ const projectSchema = new Schema<ProjectDocument>(
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     name: { type: String, required: true, trim: true },
     code: { type: String, required: true, uppercase: true, trim: true },
+    sortIndex: { type: Number, default: 0, index: true },
     description: { type: String, trim: true }
   },
   { timestamps: true }
@@ -22,5 +24,6 @@ const projectSchema = new Schema<ProjectDocument>(
 // Unique code per user (not globally)
 projectSchema.index({ userId: 1, code: 1 }, { unique: true });
 projectSchema.index({ userId: 1, name: 1 });
+projectSchema.index({ userId: 1, sortIndex: 1 });
 
 export const ProjectModel = mongoose.model<ProjectDocument>("Project", projectSchema);

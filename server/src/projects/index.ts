@@ -21,10 +21,17 @@ router.post(
       description?: string;
     };
 
+    const lastProject = await ProjectModel.findOne({ userId: req.user!.id })
+      .sort({ sortIndex: -1, createdAt: -1 })
+      .select("sortIndex")
+      .lean();
+    const nextSortIndex = (lastProject?.sortIndex ?? 0) + 1;
+
     const project = await ProjectModel.create({
       userId: req.user!.id,
       name: sanitizeText(name),
       code: toCode(code ?? name, 3),
+      sortIndex: nextSortIndex,
       description: description ? sanitizeText(description) : undefined
     });
 
@@ -40,7 +47,7 @@ router.get(
     const q = (req.query.q as string | undefined)?.trim();
     const filter: Record<string, unknown> = { userId: req.user!.id };
     if (q) filter.name = new RegExp(q, "i");
-    const projects = await ProjectModel.find(filter).sort({ createdAt: -1 });
+    const projects = await ProjectModel.find(filter).sort({ sortIndex: 1, createdAt: 1 });
     return sendSuccess(res, projects);
   })
 );
@@ -80,6 +87,27 @@ router.put(
     );
 
     if (!project) throw errors.notFound("Project không tồn tại");
+    return sendSuccess(res, project);
+  })
+);
+
+router.patch(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { name } = req.body as { name?: string };
+    if (!name?.trim()) throw errors.validation("Tên không được để trống");
+
+    const project = await ProjectModel.findOne({
+      _id: req.params.id,
+      userId: req.user!.id
+    });
+    if (!project) throw errors.notFound("Project không tồn tại");
+
+    project.name = sanitizeText(name);
+    project.code = toCode(name, 3);
+    await project.save();
+
     return sendSuccess(res, project);
   })
 );

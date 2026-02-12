@@ -21,10 +21,17 @@ router.post(
     const project = await ProjectModel.findOne({ _id: projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
 
+    const lastBuilding = await BuildingModel.findOne({ projectId: project._id })
+      .sort({ sortIndex: -1, createdAt: -1 })
+      .select("sortIndex")
+      .lean();
+    const nextSortIndex = (lastBuilding?.sortIndex ?? 0) + 1;
+
     const building = await BuildingModel.create({
       projectId: project._id,
       name: sanitizeText(name),
-      code: toCode(code ?? name, 3)
+      code: toCode(code ?? name, 3),
+      sortIndex: nextSortIndex
     });
 
     return sendSuccess(res, building, {}, 201);
@@ -44,8 +51,28 @@ router.get(
     const project = await ProjectModel.findOne({ _id: projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
 
-    const buildings = await BuildingModel.find({ projectId }).sort({ createdAt: -1 });
+    const buildings = await BuildingModel.find({ projectId }).sort({ sortIndex: 1, createdAt: 1 });
     return sendSuccess(res, buildings);
+  })
+);
+
+router.patch(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { name } = req.body as { name?: string };
+    if (!name?.trim()) throw errors.validation("Tên không được để trống");
+
+    const building = await BuildingModel.findById(req.params.id);
+    if (!building) throw errors.notFound("Building không tồn tại");
+
+    const project = await ProjectModel.findOne({ _id: building.projectId, userId: req.user!.id });
+    if (!project) throw errors.notFound("Không có quyền");
+
+    building.name = sanitizeText(name);
+    building.code = toCode(name, 3);
+    await building.save();
+    return sendSuccess(res, building);
   })
 );
 

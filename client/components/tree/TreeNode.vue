@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div>
     <div
       class="group flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-100"
@@ -28,34 +28,81 @@
         <component :is="nodeIcon" class="h-4 w-4" />
       </span>
 
-      <!-- Node name (clickable) -->
-      <button class="flex-1 truncate text-left" @click="emit('select', node)">
+      <!-- Node name: inline edit or display -->
+      <input
+        v-if="editing"
+        ref="renameInput"
+        v-model="editName"
+        class="flex-1 rounded border border-brand-300 bg-white px-1 py-0.5 text-sm font-medium text-slate-900 outline-none focus:ring-2 focus:ring-brand-400/30"
+        @keydown.enter="confirmRename"
+        @keydown.escape="cancelRename"
+        @blur="confirmRename"
+      />
+      <button v-else class="flex-1 truncate text-left" @click="handleSelect" @dblclick.stop="startRename">
         <span class="font-medium">{{ node.name }}</span>
       </button>
 
-      <!-- Action buttons (always visible) -->
-      <div class="flex shrink-0 items-center gap-0.5">
-        <!-- Delete button -->
+      <!-- Action menu -->
+      <div ref="menuRef" class="relative shrink-0">
         <button
-          class="flex h-7 w-7 items-center justify-center rounded text-rose-500 hover:bg-rose-50 active:bg-rose-100"
-          :title="deleteLabel"
-          @click.stop="emit('delete', { nodeId: node.id, nodeType: node.type, nodeName: node.name })"
+          class="flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+          title="Thao tác"
+          aria-label="Mở menu thao tác"
+          @click.stop="toggleMenu"
         >
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="4" r="1.5" />
+            <circle cx="10" cy="10" r="1.5" />
+            <circle cx="10" cy="16" r="1.5" />
           </svg>
         </button>
-        <!-- Add child button -->
-        <button
-          v-if="canAddChild"
-          class="flex h-7 w-7 items-center justify-center rounded text-brand-500 hover:bg-brand-50 active:bg-brand-100"
-          :title="addChildLabel"
-          @click.stop="emit('add-child', { parentId: node.id, parentType: node.type, childType: childType })"
+
+        <div
+          v-if="menuOpen"
+          class="absolute right-0 top-8 z-30 w-44 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
         >
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-        </button>
+          <button
+            v-if="canAddChild"
+            class="w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100"
+            @click.stop="handleAddChild"
+          >
+            {{ addChildLabel }}
+          </button>
+          <button
+            v-if="node.type !== 'task'"
+            class="w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100"
+            @click.stop="handleRenameFromMenu"
+          >
+            Đổi tên
+          </button>
+          <button
+            v-if="canReorder"
+            class="w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100"
+            @click.stop="handleReorder('up')"
+          >
+            Đưa lên
+          </button>
+          <button
+            v-if="canReorder"
+            class="w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100"
+            @click.stop="handleReorder('down')"
+          >
+            Đưa xuống
+          </button>
+          <button
+            v-if="canDuplicate"
+            class="w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100"
+            @click.stop="handleDuplicate"
+          >
+            Nhân bản
+          </button>
+          <button
+            class="w-full rounded px-2 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50"
+            @click.stop="handleDelete"
+          >
+            {{ deleteLabel }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -70,6 +117,9 @@
         @select="emit('select', $event)"
         @add-child="emit('add-child', $event)"
         @delete="emit('delete', $event)"
+        @rename="emit('rename', $event)"
+        @reorder="emit('reorder', $event)"
+        @duplicate="emit('duplicate', $event)"
       />
     </div>
   </div>
@@ -85,17 +135,63 @@ const emit = defineEmits<{
   (e: "select", node: ProjectTreeNode): void;
   (e: "add-child", payload: { parentId: string; parentType: string; childType: string }): void;
   (e: "delete", payload: { nodeId: string; nodeType: string; nodeName: string }): void;
+  (e: "rename", payload: { nodeId: string; nodeType: string; newName: string }): void;
+  (e: "reorder", payload: { nodeId: string; nodeType: string; direction: "up" | "down" }): void;
+  (e: "duplicate", payload: { nodeId: string; nodeType: string }): void;
 }>();
 
 const expanded = ref(true);
+const editing = ref(false);
+const editName = ref("");
+const renameInput = ref<HTMLInputElement | null>(null);
+const menuOpen = ref(false);
+const menuRef = ref<HTMLElement | null>(null);
+
 // Không hiển thị expand button cho drawing vì tasks không hiển thị trên cây
 const hasChildren = computed(() => {
-  if (node.value.type === 'drawing') return false;
+  if (node.value.type === "drawing") return false;
   return (node.value.children || []).length > 0;
 });
 
 const toggle = () => {
   expanded.value = !expanded.value;
+};
+
+const closeMenu = () => {
+  menuOpen.value = false;
+};
+
+const toggleMenu = () => {
+  menuOpen.value = !menuOpen.value;
+};
+
+const startRename = () => {
+  closeMenu();
+  editName.value = node.value.name;
+  editing.value = true;
+  nextTick(() => {
+    renameInput.value?.focus();
+    renameInput.value?.select();
+  });
+};
+
+const confirmRename = () => {
+  if (!editing.value) return;
+  editing.value = false;
+  const trimmed = editName.value.trim();
+  if (trimmed && trimmed !== node.value.name) {
+    emit("rename", { nodeId: node.value.id, nodeType: node.value.type, newName: trimmed });
+  }
+};
+
+const cancelRename = () => {
+  editing.value = false;
+  editName.value = "";
+};
+
+const handleSelect = () => {
+  closeMenu();
+  emit("select", node.value);
 };
 
 // Xác định child type dựa vào parent type
@@ -111,8 +207,15 @@ const childType = computed(() => {
 });
 
 const canAddChild = computed(() => {
-  // KHÔNG cho phép tạo task từ tree - phải vào bản vẽ mới tạo được
   return ["project", "building", "floor", "discipline"].includes(node.value.type);
+});
+
+const canReorder = computed(() => {
+  return ["project", "building", "floor", "discipline", "drawing"].includes(node.value.type);
+});
+
+const canDuplicate = computed(() => {
+  return ["project", "building", "floor", "discipline", "drawing"].includes(node.value.type);
 });
 
 const addChildLabel = computed(() => {
@@ -138,9 +241,70 @@ const deleteLabel = computed(() => {
   return labels[node.value.type] || "Xoá";
 });
 
-// Icon theo type
+const handleAddChild = () => {
+  closeMenu();
+  emit("add-child", {
+    parentId: node.value.id,
+    parentType: node.value.type,
+    childType: childType.value
+  });
+};
+
+const handleRenameFromMenu = () => {
+  startRename();
+};
+
+const handleReorder = (direction: "up" | "down") => {
+  closeMenu();
+  emit("reorder", { nodeId: node.value.id, nodeType: node.value.type, direction });
+};
+
+const handleDuplicate = () => {
+  closeMenu();
+  emit("duplicate", { nodeId: node.value.id, nodeType: node.value.type });
+};
+
+const handleDelete = () => {
+  closeMenu();
+  emit("delete", { nodeId: node.value.id, nodeType: node.value.type, nodeName: node.value.name });
+};
+
+const handleGlobalPointerDown = (event: PointerEvent) => {
+  const target = event.target as Node | null;
+  if (!target || !menuRef.value) return;
+  if (menuRef.value.contains(target)) return;
+  closeMenu();
+};
+
+const handleGlobalKeydown = (event: KeyboardEvent) => {
+  if (event.key === "Escape") {
+    closeMenu();
+  }
+};
+
+watch(menuOpen, (isOpen) => {
+  if (typeof document === "undefined") return;
+  if (isOpen) {
+    document.addEventListener("pointerdown", handleGlobalPointerDown);
+    document.addEventListener("keydown", handleGlobalKeydown);
+    return;
+  }
+  document.removeEventListener("pointerdown", handleGlobalPointerDown);
+  document.removeEventListener("keydown", handleGlobalKeydown);
+});
+
+watch(() => props.selectedId, () => {
+  closeMenu();
+});
+
+onBeforeUnmount(() => {
+  if (typeof document === "undefined") return;
+  document.removeEventListener("pointerdown", handleGlobalPointerDown);
+  document.removeEventListener("keydown", handleGlobalKeydown);
+});
+
 const nodeIcon = computed(() => {
-  return "span"; // Placeholder - sẽ dùng icon thực
+  return "span";
 });
 
 const iconClass = computed(() => {

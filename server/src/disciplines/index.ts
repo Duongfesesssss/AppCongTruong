@@ -29,12 +29,19 @@ router.post(
     const project = await ProjectModel.findOne({ _id: floor.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
 
+    const lastDiscipline = await DisciplineModel.findOne({ floorId: floor._id })
+      .sort({ sortIndex: -1, createdAt: -1 })
+      .select("sortIndex")
+      .lean();
+    const nextSortIndex = (lastDiscipline?.sortIndex ?? 0) + 1;
+
     const discipline = await DisciplineModel.create({
       projectId: project._id,
       buildingId: building._id,
       floorId: floor._id,
       name: sanitizeText(name),
-      code: toCode(code ?? name, 3)
+      code: toCode(code ?? name, 3),
+      sortIndex: nextSortIndex
     });
 
     return sendSuccess(res, discipline, {}, 201);
@@ -58,8 +65,30 @@ router.get(
     const project = await ProjectModel.findOne({ _id: floor.projectId, userId: req.user!.id });
     if (!project) throw errors.notFound("Floor không tồn tại hoặc không có quyền");
 
-    const disciplines = await DisciplineModel.find({ floorId }).sort({ createdAt: -1 });
+    const disciplines = await DisciplineModel.find({ floorId }).sort({ sortIndex: 1, createdAt: 1 });
     return sendSuccess(res, disciplines);
+  })
+);
+
+router.patch(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { name } = req.body as { name?: string };
+    if (!name?.trim()) throw errors.validation("Tên không được để trống");
+
+    const discipline = await DisciplineModel.findById(req.params.id);
+    if (!discipline) throw errors.notFound("Discipline không tồn tại");
+
+    const floor = await FloorModel.findById(discipline.floorId);
+    if (!floor) throw errors.notFound("Discipline không tồn tại");
+    const project = await ProjectModel.findOne({ _id: floor.projectId, userId: req.user!.id });
+    if (!project) throw errors.notFound("Không có quyền");
+
+    discipline.name = sanitizeText(name);
+    discipline.code = toCode(name, 3);
+    await discipline.save();
+    return sendSuccess(res, discipline);
   })
 );
 

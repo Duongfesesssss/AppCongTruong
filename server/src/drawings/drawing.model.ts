@@ -6,6 +6,7 @@ export type DrawingDocument = {
   floorId: mongoose.Types.ObjectId;
   disciplineId: mongoose.Types.ObjectId;
   name: string;
+  sortIndex: number;
   originalName: string;
   storageKey: string;
   mimeType: string;
@@ -21,6 +22,7 @@ const drawingSchema = new Schema<DrawingDocument>(
     floorId: { type: Schema.Types.ObjectId, ref: "Floor", required: true, index: true },
     disciplineId: { type: Schema.Types.ObjectId, ref: "Discipline", required: true, index: true },
     name: { type: String, required: true, trim: true },
+    sortIndex: { type: Number, default: 0, index: true },
     originalName: { type: String, required: true },
     storageKey: { type: String, required: true },
     mimeType: { type: String, required: true },
@@ -30,5 +32,6 @@ const drawingSchema = new Schema<DrawingDocument>(
 );
 
 drawingSchema.index({ disciplineId: 1, createdAt: -1 });
+drawingSchema.index({ disciplineId: 1, sortIndex: 1 });
 
 export const DrawingModel = mongoose.model<DrawingDocument>("Drawing", drawingSchema);

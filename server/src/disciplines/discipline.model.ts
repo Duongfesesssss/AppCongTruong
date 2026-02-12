@@ -6,6 +6,7 @@ export type DisciplineDocument = {
   floorId: mongoose.Types.ObjectId;
   name: string;
   code: string;
+  sortIndex: number;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -16,11 +17,13 @@ const disciplineSchema = new Schema<DisciplineDocument>(
     buildingId: { type: Schema.Types.ObjectId, ref: "Building", required: true, index: true },
     floorId: { type: Schema.Types.ObjectId, ref: "Floor", required: true, index: true },
     name: { type: String, required: true, trim: true },
-    code: { type: String, required: true, uppercase: true, trim: true }
+    code: { type: String, required: true, uppercase: true, trim: true },
+    sortIndex: { type: Number, default: 0, index: true }
   },
   { timestamps: true }
 );
 
 disciplineSchema.index({ floorId: 1, code: 1 });
+disciplineSchema.index({ floorId: 1, sortIndex: 1 });
 
 export const DisciplineModel = mongoose.model<DisciplineDocument>("Discipline", disciplineSchema);

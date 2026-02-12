@@ -12,11 +12,13 @@ const mimeToExt: Record<string, string> = {
   "application/pdf": ".pdf",
   "image/jpeg": ".jpg",
   "image/png": ".png",
-  "image/webp": ".webp"
+  "image/webp": ".webp",
+  "application/vnd.ms-excel": ".xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx"
 };
 
 type UploadOptions = {
-  subDir: "drawings" | "photos";
+  subDir: "drawings" | "photos" | "rooms";
   allowedMime: string[];
   maxMb: number;
 };

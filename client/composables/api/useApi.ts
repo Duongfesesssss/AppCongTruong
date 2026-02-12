@@ -1,4 +1,6 @@
-﻿type ApiSuccess<T> = { success: true; data: T; meta?: Record<string, unknown> };
+import { useToast } from "~/composables/state/useToast";
+
+type ApiSuccess<T> = { success: true; data: T; meta?: Record<string, unknown> };
 
 type ApiFailure = {
   success: false;
@@ -15,6 +17,8 @@ export const useApi = () => {
   // Đọc trực tiếp từ useState để tránh circular dependency với useAuth
   const token = useState<string | null>("auth-token", () => null);
   const user = useState<unknown | null>("auth-user", () => null);
+  const sessionWarningAt = useState<number>("auth-session-warning-at", () => 0);
+  const toast = process.client ? useToast() : null;
 
   // Tránh gọi refresh nhiều lần cùng lúc
   let refreshPromise: Promise<boolean> | null = null;
@@ -40,12 +44,69 @@ export const useApi = () => {
     }
   };
 
+  const decodeTokenExpMs = (value: string) => {
+    if (!process.client) return null;
+    try {
+      const parts = value.split(".");
+      if (parts.length < 2) return null;
+      const payloadRaw = parts[1]
+        .replace(/-/g, "+")
+        .replace(/_/g, "/")
+        .padEnd(Math.ceil(parts[1].length / 4) * 4, "=");
+      const payloadText = atob(payloadRaw);
+      const payload = JSON.parse(payloadText) as { exp?: number };
+      if (!payload.exp) return null;
+      return payload.exp * 1000;
+    } catch {
+      return null;
+    }
+  };
+
+  const isTokenNearExpiry = (value: string, thresholdMs: number) => {
+    const expMs = decodeTokenExpMs(value);
+    if (!expMs) return false;
+    return expMs - Date.now() <= thresholdMs;
+  };
+
+  const logoutClient = () => {
+    token.value = null;
+    user.value = null;
+    if (process.client) {
+      localStorage.removeItem("accessToken");
+      navigateTo("/login");
+    }
+  };
+
   const request = async <T>(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     body?: unknown,
     _isRetry = false
   ): Promise<T> => {
+    if (
+      token.value &&
+      path !== "/auth/refresh" &&
+      path !== "/auth/login" &&
+      path !== "/auth/register" &&
+      isTokenNearExpiry(token.value, 90_000)
+    ) {
+      if (process.client && Date.now() - sessionWarningAt.value > 60_000) {
+        toast?.push("Phiên đăng nhập sắp hết hạn, hệ thống đang tự gia hạn", "info");
+        sessionWarningAt.value = Date.now();
+      }
+
+      if (!refreshPromise) {
+        refreshPromise = tryRefreshToken().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      const refreshed = await refreshPromise;
+      if (!refreshed) {
+        logoutClient();
+        throw new Error("Phiên đăng nhập đã hết hạn");
+      }
+    }
+
     const headers: Record<string, string> = {};
     if (token.value) headers.Authorization = `Bearer ${token.value}`;
 
@@ -70,25 +131,21 @@ export const useApi = () => {
 
       if (!response.ok || !payload.success) {
         const code = "error" in payload ? payload.error.code : "";
-        const message =
-          "error" in payload ? payload.error.message : "Co loi xay ra";
+        const message = "error" in payload ? payload.error.message : "Co loi xay ra";
 
         // Nếu 401 và chưa retry → thử refresh token rồi gọi lại
         if (code === "UNAUTHORIZED" && !_isRetry && path !== "/auth/refresh") {
           if (!refreshPromise) {
-            refreshPromise = tryRefreshToken().finally(() => { refreshPromise = null; });
+            refreshPromise = tryRefreshToken().finally(() => {
+              refreshPromise = null;
+            });
           }
           const refreshed = await refreshPromise;
           if (refreshed) {
             return request<T>(method, path, body, true);
           }
           // Refresh thất bại → logout
-          token.value = null;
-          user.value = null;
-          if (process.client) {
-            localStorage.removeItem("accessToken");
-            navigateTo("/login");
-          }
+          logoutClient();
         }
         throw new Error(message);
       }

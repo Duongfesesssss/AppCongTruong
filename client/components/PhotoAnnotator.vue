@@ -176,13 +176,43 @@
               @pointerdown="handlePointerDown"
               @pointermove="handlePointerMove"
               @pointerup="handlePointerUp"
+              @wheel.prevent="handleWheel"
             ></canvas>
+
+            <!-- Zoom controls (fixed bottom-right) -->
+            <div class="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg border border-slate-200 bg-white/90 p-1 shadow-sm backdrop-blur-sm sm:bottom-3 sm:right-3">
+              <button
+                class="flex h-8 w-8 items-center justify-center rounded text-slate-600 hover:bg-slate-100 active:bg-slate-200 sm:h-9 sm:w-9"
+                title="Thu nhỏ"
+                @click="zoomOut"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
+                </svg>
+              </button>
+              <button
+                class="flex h-8 min-w-[3rem] items-center justify-center rounded text-xs font-medium text-slate-700 hover:bg-slate-100 active:bg-slate-200"
+                title="Reset zoom"
+                @click="resetView"
+              >
+                {{ Math.round(zoomLevel * 100) }}%
+              </button>
+              <button
+                class="flex h-8 w-8 items-center justify-center rounded text-slate-600 hover:bg-slate-100 active:bg-slate-200 sm:h-9 sm:w-9"
+                title="Phóng to"
+                @click="zoomIn"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+            </div>
 
             <!-- Instructions overlay -->
             <div v-if="lines.length === 0" class="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div class="rounded-lg bg-black/60 px-4 py-3 text-center text-sm text-white backdrop-blur-sm">
                 <p class="font-medium">Chạm và kéo để vẽ đường đo</p>
-                <p class="mt-1 text-xs opacity-75">Khoảng cách sẽ hiển thị tự động</p>
+                <p class="mt-1 text-xs opacity-75">Cuộn chuột để zoom • Khoảng cách hiển thị tự động</p>
               </div>
             </div>
           </div>
@@ -276,6 +306,7 @@ const selectedLine = ref<number | null>(null);
 const panOffset = ref({ x: 0, y: 0 });
 const isPanning = ref(false);
 const panStart = ref<{ x: number; y: number } | null>(null);
+const zoomLevel = ref(1);
 
 // Drawing state
 const drawing = ref(false);
@@ -314,6 +345,50 @@ const annotationHistory = useAnnotationHistory();
 // Cache photoId to avoid issues when closing
 const cachedPhotoId = ref<string>("");
 
+// === Autosave draft to localStorage ===
+let autosaveInterval: ReturnType<typeof setInterval> | null = null;
+
+const getDraftKey = (photoId: string) => `photo-draft-${photoId}`;
+
+const saveDraft = () => {
+  if (lines.value.length === 0 || !cachedPhotoId.value) return;
+  try {
+    const draft = {
+      annotations: normalizeLines(lines.value),
+      timestamp: Date.now()
+    };
+    localStorage.setItem(getDraftKey(cachedPhotoId.value), JSON.stringify(draft));
+  } catch {}
+};
+
+const loadDraft = (photoId: string): Line[] | null => {
+  try {
+    const raw = localStorage.getItem(getDraftKey(photoId));
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (draft.annotations && draft.annotations.length > 0) {
+      return draft.annotations;
+    }
+  } catch {}
+  return null;
+};
+
+const clearDraft = (photoId: string) => {
+  try { localStorage.removeItem(getDraftKey(photoId)); } catch {}
+};
+
+const startAutosave = () => {
+  stopAutosave();
+  autosaveInterval = setInterval(saveDraft, 15000); // Mỗi 15 giây
+};
+
+const stopAutosave = () => {
+  if (autosaveInterval) {
+    clearInterval(autosaveInterval);
+    autosaveInterval = null;
+  }
+};
+
 // Recent history computed
 const recentHistory = computed(() => {
   return annotationHistory.getRecentGlobal(6);
@@ -327,6 +402,58 @@ const useHistoryItem = (item: any) => {
     draw();
     toast.push(`Đã dùng: ${item.realDistance}`, "success");
   }
+};
+
+// Helper: lấy display size hiện tại của canvas
+const getDisplaySize = () => {
+  const canvas = canvasRef.value;
+  if (!canvas) return { w: 1, h: 1 };
+  const w = parseFloat(canvas.style.width) || canvas.width || 1;
+  const h = parseFloat(canvas.style.height) || canvas.height || 1;
+  return { w, h };
+};
+
+// Normalize pixel coords → 0-1 range (để lưu trữ)
+const normalizeLines = (pixelLines: Line[]): Line[] => {
+  const { w, h } = getDisplaySize();
+  return pixelLines.map(line => ({
+    ...line,
+    x1: line.x1 / w,
+    y1: line.y1 / h,
+    x2: line.x2 / w,
+    y2: line.y2 / h,
+    distance: Math.sqrt(
+      Math.pow((line.x2 / w) - (line.x1 / w), 2) +
+      Math.pow((line.y2 / h) - (line.y1 / h), 2)
+    )
+  }));
+};
+
+// Denormalize 0-1 coords → pixel coords (để hiển thị)
+const denormalizeLines = (storedLines: Line[]): Line[] => {
+  const { w, h } = getDisplaySize();
+  return storedLines.map(line => {
+    // Detect: nếu tất cả coords nằm trong [0, 1] → normalized
+    const isNorm = line.x1 >= 0 && line.x1 <= 1 &&
+                   line.y1 >= 0 && line.y1 <= 1 &&
+                   line.x2 >= 0 && line.x2 <= 1 &&
+                   line.y2 >= 0 && line.y2 <= 1;
+
+    if (!isNorm) return line; // Dữ liệu cũ pixel, giữ nguyên
+
+    const denorm = {
+      ...line,
+      x1: line.x1 * w,
+      y1: line.y1 * h,
+      x2: line.x2 * w,
+      y2: line.y2 * h,
+    };
+    denorm.distance = Math.sqrt(
+      Math.pow(denorm.x2 - denorm.x1, 2) +
+      Math.pow(denorm.y2 - denorm.y1, 2)
+    );
+    return denorm;
+  });
 };
 
 // Migration: Convert legacy Line to new format
@@ -374,10 +501,19 @@ const loadImage = () => {
   img.onload = () => {
     image.value = img;
     resizeCanvas();
-    if (props.initialAnnotations && props.initialAnnotations.length > 0) {
-      // Migrate all annotations to new format
-      lines.value = props.initialAnnotations.map(migrateLine);
-      console.log("Loaded and migrated annotations:", lines.value);
+    // Kiểm tra draft trong localStorage trước
+    const draft = loadDraft(cachedPhotoId.value);
+    if (draft && draft.length > 0) {
+      // Có draft chưa lưu → recover
+      const migrated = draft.map(migrateLine);
+      lines.value = denormalizeLines(migrated);
+      toast.push("Đã khôi phục bản nháp chưa lưu", "success");
+      console.log("Recovered draft annotations:", lines.value);
+    } else if (props.initialAnnotations && props.initialAnnotations.length > 0) {
+      // Migrate → denormalize (0-1 → pixel) cho display hiện tại
+      const migrated = props.initialAnnotations.map(migrateLine);
+      lines.value = denormalizeLines(migrated);
+      console.log("Loaded, migrated and denormalized annotations:", lines.value);
     } else {
       console.log("No initial annotations to load");
       lines.value = [];
@@ -436,6 +572,44 @@ const resizeCanvas = () => {
   }
 };
 
+// === Zoom controls ===
+const zoomIn = () => { zoomLevel.value = Math.min(zoomLevel.value * 1.25, 5); draw(); };
+const zoomOut = () => { zoomLevel.value = Math.max(zoomLevel.value / 1.25, 0.3); draw(); };
+const resetView = () => { zoomLevel.value = 1; panOffset.value = { x: 0, y: 0 }; draw(); };
+
+const handleWheel = (e: WheelEvent) => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  zoomLevel.value = Math.min(Math.max(zoomLevel.value * factor, 0.3), 5);
+  draw();
+};
+
+// Handle resize: scale tọa độ từ old size → new size
+const handleResize = () => {
+  const oldSize = getDisplaySize();
+  resizeCanvas();
+  const newSize = getDisplaySize();
+
+  if (oldSize.w > 1 && oldSize.h > 1 && lines.value.length > 0) {
+    const scaleX = newSize.w / oldSize.w;
+    const scaleY = newSize.h / oldSize.h;
+    lines.value = lines.value.map(line => {
+      const scaled = {
+        ...line,
+        x1: line.x1 * scaleX,
+        y1: line.y1 * scaleY,
+        x2: line.x2 * scaleX,
+        y2: line.y2 * scaleY,
+      };
+      scaled.distance = Math.sqrt(
+        Math.pow(scaled.x2 - scaled.x1, 2) + Math.pow(scaled.y2 - scaled.y1, 2)
+      );
+      return scaled;
+    });
+  }
+  draw();
+};
+
 const draw = () => {
   const canvas = canvasRef.value;
   const context = ctx.value;
@@ -452,8 +626,9 @@ const draw = () => {
   // Save context state
   context.save();
 
-  // Apply pan offset
+  // Apply pan + zoom
   context.translate(panOffset.value.x, panOffset.value.y);
+  context.scale(zoomLevel.value, zoomLevel.value);
 
   // Draw image
   context.drawImage(img, 0, 0, displayWidth, displayHeight);
@@ -597,9 +772,9 @@ const getCanvasCoords = (e: PointerEvent) => {
   const displayWidth = parseFloat(canvas.style.width) || canvas.width;
   const displayHeight = parseFloat(canvas.style.height) || canvas.height;
 
-  // Calculate coords accounting for pan offset
-  const x = ((e.clientX - rect.left) / rect.width) * displayWidth - panOffset.value.x;
-  const y = ((e.clientY - rect.top) / rect.height) * displayHeight - panOffset.value.y;
+  // Calculate coords accounting for pan + zoom
+  const x = (((e.clientX - rect.left) / rect.width) * displayWidth - panOffset.value.x) / zoomLevel.value;
+  const y = (((e.clientY - rect.top) / rect.height) * displayHeight - panOffset.value.y) / zoomLevel.value;
 
   return { x, y };
 };
@@ -850,9 +1025,11 @@ const saveAnnotations = async () => {
   }
 
   try {
+    // Normalize pixel → 0-1 trước khi lưu (đảm bảo hoạt động cross-device)
     await api.patch(`/photos/${props.photoId}`, {
-      annotations: lines.value
+      annotations: normalizeLines(lines.value)
     });
+    clearDraft(props.photoId); // Xoá draft sau khi lưu thành công
     toast.push("Đã lưu đo đạc", "success");
     emit("saved");
   } catch (err) {
@@ -962,28 +1139,10 @@ const handleImportExcel = async (event: Event) => {
       total: number;
     }>(`/photos/${props.photoId}/import-annotations?mode=${mode}`, formData);
 
-    // Reload annotations from response
+    // Reload annotations from response - denormalize 0-1 → pixel
     if (response.photo && response.photo.annotations) {
-      lines.value = response.photo.annotations.map((line: any) => {
-        // Convert normalized coordinates to pixel coordinates
-        if (!image.value) return line;
-
-        const imgWidth = image.value.width;
-        const imgHeight = image.value.height;
-
-        return {
-          ...line,
-          x1: line.x1 * imgWidth,
-          y1: line.y1 * imgHeight,
-          x2: line.x2 * imgWidth,
-          y2: line.y2 * imgHeight,
-          distance: Math.sqrt(
-            Math.pow(line.x2 * imgWidth - line.x1 * imgWidth, 2) +
-            Math.pow(line.y2 * imgHeight - line.y1 * imgHeight, 2)
-          )
-        };
-      });
-
+      const migrated = (response.photo.annotations as Line[]).map(migrateLine);
+      lines.value = denormalizeLines(migrated);
       draw();
       toast.push(`Đã import ${response.imported} đường đo`, "success");
       emit("saved");
@@ -1078,30 +1237,35 @@ watch(() => props.show, (newVal, oldVal) => {
     // Cache photoId khi mở
     cachedPhotoId.value = props.photoId;
 
-    // Reset pan offset
+    // Reset pan/zoom
     panOffset.value = { x: 0, y: 0 };
+    zoomLevel.value = 1;
     isPanning.value = false;
     panStart.value = null;
 
     // Chỉ load khi mở modal (từ false → true)
     nextTick(() => {
       loadImage();
-      window.addEventListener("resize", resizeCanvas);
+      startAutosave();
+      window.addEventListener("resize", handleResize);
     });
   } else if (!newVal && oldVal) {
     // Khi đóng modal (từ true → false)
-    window.removeEventListener("resize", resizeCanvas);
+    stopAutosave();
+    window.removeEventListener("resize", handleResize);
     // Auto-save nếu có lines và có photoId
     if (lines.value.length > 0 && cachedPhotoId.value) {
-      // Use cached photoId instead of props.photoId
       const photoIdToSave = cachedPhotoId.value;
       if (photoIdToSave) {
         api.patch(`/photos/${photoIdToSave}`, {
-          annotations: lines.value
+          annotations: normalizeLines(lines.value)
         }).then(() => {
+          clearDraft(photoIdToSave); // Xoá draft sau khi lưu thành công
           console.log("Auto-saved annotations on close");
           emit("saved");
         }).catch((err) => {
+          // Lưu server lỗi → giữ draft trong localStorage để recover sau
+          saveDraft();
           console.error("Error auto-saving annotations:", err);
         });
       }

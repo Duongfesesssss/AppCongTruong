@@ -21,6 +21,17 @@
         <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 sm:px-4 py-2 sm:py-3">
           <h3 class="text-sm sm:text-base font-semibold text-slate-900">Bản vẽ</h3>
           <div class="flex items-center gap-1.5 sm:gap-2">
+            <!-- Nút tải tất cả ảnh trong bản vẽ -->
+            <button
+              class="flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+              :disabled="downloadingDrawingImages || loading"
+              @click="downloadDrawingImages"
+            >
+              <svg class="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v-8m0 8l-3-3m3 3l3-3M5 20h14" />
+              </svg>
+              {{ downloadingDrawingImages ? "Đang tải..." : "Tải tất cả ảnh" }}
+            </button>
             <!-- Nút bỏ chọn task -->
             <button
               v-if="selectedTask"
@@ -159,11 +170,14 @@ import { useToast } from "~/composables/state/useToast";
 const selected = useSelectedNode();
 const api = useApi();
 const toast = useToast();
+const config = useRuntimeConfig();
+const token = useState<string | null>("auth-token", () => null);
 
 const drawing = ref<Record<string, unknown> | null>(null);
 const pins = ref<any[]>([]);
 const zones = ref<any[]>([]);
 const selectedTask = ref<any>(null);
+const downloadingDrawingImages = ref(false);
 
 const loading = ref(false);
 const error = ref("");
@@ -219,6 +233,70 @@ const reloadTasksOnly = async () => {
     zones.value = zonesData || [];
   } catch {
     // Lỗi nhẹ, không cần hiển thị
+  }
+};
+
+const downloadDrawingImages = async () => {
+  const node = selected.value;
+  if (!node || node.type !== "drawing") {
+    toast.push("Vui lòng chọn bản vẽ", "info");
+    return;
+  }
+
+  downloadingDrawingImages.value = true;
+  try {
+    const baseUrl = config.public.apiBase.startsWith("http")
+      ? config.public.apiBase
+      : `${window.location.origin}${config.public.apiBase}`;
+
+    const url = new URL(`${baseUrl}/reports/export-images`);
+    url.searchParams.set("drawingId", node.id);
+    if (token.value) {
+      url.searchParams.set("token", token.value);
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      credentials: "include"
+    });
+
+    if (!response.ok) {
+      let message = "Không thể tải ảnh";
+      try {
+        const errorData = await response.json();
+        if (errorData?.error?.message) {
+          message = errorData.error.message;
+        }
+      } catch {
+        // Ignore JSON parse error
+      }
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const safeName = (node.name || "drawing")
+      .toString()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\w.-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+    const fileName = `anh-${safeName || "drawing"}-${Date.now()}.zip`;
+
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
+
+    toast.push("Đang tải ảnh của bản vẽ...", "success");
+  } catch (err) {
+    toast.push((err as Error).message || "Lỗi khi tải ảnh", "error");
+  } finally {
+    downloadingDrawingImages.value = false;
   }
 };
 

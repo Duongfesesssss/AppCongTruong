@@ -6,12 +6,11 @@
         <p class="text-[10px] uppercase tracking-widest text-slate-400 sm:text-xs">Plan View</p>
         <h2 class="truncate text-sm font-semibold text-slate-900 sm:text-base">{{ drawingTitle }}</h2>
       </div>
-      <!-- Zoom buttons disabled - PDF has native zoom -->
-      <div class="flex items-center gap-1 sm:gap-2" style="opacity: 0.3; pointer-events: none;">
-        <button class="btn" disabled>−</button>
-        <span class="text-[10px] text-slate-500 sm:text-xs">100%</span>
-        <button class="btn" disabled>+</button>
-        <button class="btn hidden sm:inline-flex" disabled>Reset</button>
+      <div class="flex items-center gap-1 sm:gap-2">
+        <button class="btn" title="Thu nhỏ" @click="zoomOut">−</button>
+        <button class="btn min-w-[54px]" title="Reset view" @click="resetView">{{ Math.round(zoom * 100) }}%</button>
+        <button class="btn" title="Phóng to" @click="zoomIn">+</button>
+        <button class="btn hidden sm:inline-flex" @click="resetView">Reset</button>
       </div>
     </div>
 
@@ -41,6 +40,11 @@
       class="relative overflow-auto bg-slate-50"
       style="touch-action: pan-y pinch-zoom"
       :class="placingPin ? 'h-[50vh] sm:h-[65vh]' : 'h-[55vh] sm:h-[70vh]'"
+      @wheel.prevent="handleWheel"
+      @pointerdown="handleViewportPointerDown"
+      @pointermove="handlePointerMove"
+      @pointerup="handlePointerUp"
+      @pointerleave="handlePointerUp"
     >
       <div v-if="loading" class="flex h-full items-center justify-center text-sm text-slate-500">
         Đang tải bản vẽ...
@@ -80,9 +84,6 @@
             @click.self="handleOverlayClick"
             @mousemove.self="updateGhostPin"
             @mouseleave="ghostPin = null"
-            @pointermove="handlePointerMove"
-            @pointerup="handlePointerUp"
-            @pointerleave="handlePointerUp"
           >
             <!-- Ghost pin -->
             <div
@@ -203,9 +204,7 @@ const fileUrl = computed(() => {
 });
 
 const transformStyle = computed(() => ({
-  // Chỉ dùng translate để pan, không dùng scale để tránh PDF bị vỡ ảnh
-  // PDF có zoom native riêng, không cần CSS scale
-  transform: `translate(${offset.x}px, ${offset.y}px)`,
+  transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom.value})`,
   transformOrigin: "top left"
 }));
 
@@ -232,6 +231,10 @@ const normalizedCoords = (event: PointerEvent | MouseEvent): { x: number; y: num
 const zoomIn = () => { zoom.value = Math.min(zoom.value + 0.15, 3); };
 const zoomOut = () => { zoom.value = Math.max(zoom.value - 0.15, 0.3); };
 const resetView = () => { zoom.value = 1; offset.x = 0; offset.y = 0; };
+const handleWheel = (event: WheelEvent) => {
+  const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+  zoom.value = Math.min(Math.max(zoom.value * factor, 0.3), 3);
+};
 
 // === Pan (kéo bản vẽ) ===
 const startPan = (event: PointerEvent) => {
@@ -244,12 +247,12 @@ const startPan = (event: PointerEvent) => {
   panOrigin.y = offset.y;
 };
 
-// Handler cho viewport-level pointerdown - chỉ xử lý pin drag, không pan
+// Bắt đầu pan khi kéo trên nền bản vẽ
 const handleViewportPointerDown = (event: PointerEvent) => {
-  // Không pan nữa - để PDF scroll tự nhiên
-  // Chỉ xử lý khi click vào pin hoặc đang placing pin
   const target = event.target as HTMLElement;
-  if (!target.closest('.pin-element') && !props.placingPin) return;
+  if (props.placingPin) return;
+  if (target.closest(".pin-element")) return;
+  startPan(event);
 };
 
 // pointermove đặt ở viewport (bên ngoài content transform)
@@ -290,6 +293,11 @@ const handlePointerUp = () => {
     return;
   }
   panning.value = false;
+  if (didPan.value) {
+    setTimeout(() => {
+      didPan.value = false;
+    }, 0);
+  }
 };
 
 // === Pin placement (đặt pin mới) ===
