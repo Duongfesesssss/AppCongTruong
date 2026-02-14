@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="grid gap-6">
     <!-- Selection Info -->
     <section class="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
@@ -164,7 +164,7 @@
 
 <script setup lang="ts">
 import { useSelectedNode, type SelectedNode } from "~/composables/state/useSelectedNode";
-import { useApi } from "~/composables/api/useApi";
+import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 
 const selected = useSelectedNode();
@@ -322,10 +322,14 @@ const closeTaskCreator = () => {
   pendingPinCoords.value = null;
 };
 
-const handleTaskCreated = async () => {
+const handleTaskCreated = async (createdData: unknown) => {
   showTaskCreator.value = false;
   pendingPinCoords.value = null;
   placingPin.value = false;
+  if (isOfflineQueuedResponse(createdData)) {
+    toast.push("Task da luu tam. He thong se tu dong bo khi co mang.", "info");
+    return;
+  }
   await reloadTasksOnly();
 };
 
@@ -341,12 +345,16 @@ const handlePinMove = async (data: { pinId: string; pinX: number; pinY: number }
   }
 
   try {
-    await api.post("/tasks", {
+    const result = await api.post("/tasks", {
       id: data.pinId,
       pinX: data.pinX,
       pinY: data.pinY
     });
-    toast.push("Đã di chuyển pin", "success");
+    if (isOfflineQueuedResponse(result)) {
+      toast.push("Da luu tam vi tri pin. Se dong bo khi co mang.", "info");
+    } else {
+      toast.push("Đã di chuyển pin", "success");
+    }
   } catch (err) {
     toast.push((err as Error).message, "error");
     // Rollback vị trí cũ nếu lỗi

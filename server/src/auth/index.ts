@@ -2,7 +2,7 @@
 import bcrypt from "bcryptjs";
 import jwt, { type SignOptions } from "jsonwebtoken";
 
-import { config, isProd } from "../lib/config";
+import { config } from "../lib/config";
 import { asyncHandler, sendSuccess } from "../lib/response";
 import { errors } from "../lib/errors";
 import { loginSchema, refreshSchema, registerSchema } from "../users/user.schema";
@@ -63,7 +63,7 @@ router.post(
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
-      secure: isProd,
+      secure: config.cookieSecure,
       sameSite: "lax",
       maxAge: parseDurationToMs(config.refreshTokenTtl, 1000 * 60 * 60 * 24 * 7)
     });
@@ -112,7 +112,7 @@ router.post(
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
-      secure: isProd,
+      secure: config.cookieSecure,
       sameSite: "lax",
       maxAge: parseDurationToMs(config.refreshTokenTtl, 1000 * 60 * 60 * 24 * 7)
     });
@@ -175,7 +175,7 @@ router.post(
 
     res.cookie("refreshToken", newRefresh, {
       httpOnly: true,
-      secure: isProd,
+      secure: config.cookieSecure,
       sameSite: "lax",
       maxAge: parseDurationToMs(config.refreshTokenTtl, 1000 * 60 * 60 * 24 * 7)
     });

@@ -244,7 +244,7 @@
 </template>
 
 <script setup lang="ts">
-import { useApi } from "~/composables/api/useApi";
+import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import { useAnnotationHistory } from "~/composables/state/useAnnotationHistory";
 
@@ -1025,12 +1025,17 @@ const saveAnnotations = async () => {
 
   try {
     // Normalize pixel → 0-1 trước khi lưu (đảm bảo hoạt động cross-device)
-    await api.patch(`/photos/${props.photoId}`, {
+    const result = await api.patch(`/photos/${props.photoId}`, {
       annotations: normalizeLines(lines.value)
     });
-    clearDraft(props.photoId); // Xoá draft sau khi lưu thành công
-    toast.push("Đã lưu đo đạc", "success");
-    emit("saved");
+    if (isOfflineQueuedResponse(result)) {
+      saveDraft();
+      toast.push("Da luu tam do dac, se dong bo khi co mang", "info");
+    } else {
+      clearDraft(props.photoId); // Xoá draft sau khi lưu thành công
+      toast.push("Đã lưu đo đạc", "success");
+      emit("saved");
+    }
   } catch (err) {
     console.error("Error saving annotations:", err);
     toast.push((err as Error).message || "Lỗi khi lưu", "error");
@@ -1265,7 +1270,12 @@ watch(() => props.show, (newVal, oldVal) => {
       if (photoIdToSave) {
         api.patch(`/photos/${photoIdToSave}`, {
           annotations: normalizeLines(lines.value)
-        }).then(() => {
+        }).then((result) => {
+          if (isOfflineQueuedResponse(result)) {
+            saveDraft();
+            console.log("Queued annotations on close");
+            return;
+          }
           clearDraft(photoIdToSave); // Xoá draft sau khi lưu thành công
           console.log("Auto-saved annotations on close");
           emit("saved");

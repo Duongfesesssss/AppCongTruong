@@ -1,5 +1,6 @@
 ﻿<template>
   <div class="min-h-screen bg-slate-100">
+    <OfflineBanner />
     <!-- Mobile header with sidebar toggle -->
     <header class="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
       <button

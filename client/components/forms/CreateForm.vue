@@ -159,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { useApi } from "~/composables/api/useApi";
+import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import { useProjectTree } from "~/composables/api/useProjectTree";
 
@@ -435,11 +435,18 @@ const handleSubmit = async () => {
         break;
     }
 
-    toast.push(`Tạo ${props.type} thành công`, "success");
+    const queued = isOfflineQueuedResponse(result);
+    if (queued) {
+      toast.push(`Da luu tam ${props.type}, se dong bo khi co mang`, "info");
+    } else {
+      toast.push(`Tạo ${props.type} thành công`, "success");
+    }
     if (props.type === "task") {
       clearTaskDraft();
     }
-    await fetchTree();
+    if (!queued) {
+      await fetchTree();
+    }
     resetForm();
     emit("created", result);
     emit("close");

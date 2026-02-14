@@ -110,11 +110,13 @@
             <img
               :src="getPhotoUrl(photo)"
               :alt="photo.storageKey"
-              class="h-full w-full cursor-pointer object-cover transition-transform group-hover:scale-105"
-              @click="openAnnotator(photo)"
+              class="h-full w-full object-cover transition-transform"
+              :class="photo._offlineQueued ? 'cursor-not-allowed opacity-80' : 'cursor-pointer group-hover:scale-105'"
+              @click="!photo._offlineQueued && openAnnotator(photo)"
             />
             <!-- Delete button (top-left) -->
             <button
+              v-if="!photo._offlineQueued"
               class="absolute left-1 top-1 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-rose-500 text-white shadow-lg hover:bg-rose-600 active:bg-rose-700"
               title="Xoá ảnh"
               @click.stop="handleDeletePhoto(photo)"
@@ -125,7 +127,7 @@
             </button>
             <!-- Badge nếu đã có annotations (top-right) -->
             <div
-              v-if="photo.annotations?.length"
+              v-if="!photo._offlineQueued && photo.annotations?.length"
               class="absolute right-1 top-1 z-10 flex items-center gap-0.5 rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow"
             >
               <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -134,7 +136,17 @@
               </svg>
               {{ photo.annotations.length }}
             </div>
-            <div class="absolute inset-0 flex cursor-pointer items-center justify-center bg-black/0 transition-colors group-hover:bg-black/30" @click="openAnnotator(photo)">
+            <div
+              v-if="photo._offlineQueued"
+              class="absolute right-1 top-1 z-10 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white"
+            >
+              Cho dong bo
+            </div>
+            <div
+              class="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors"
+              :class="photo._offlineQueued ? '' : 'cursor-pointer group-hover:bg-black/30'"
+              @click="!photo._offlineQueued && openAnnotator(photo)"
+            >
               <svg class="h-8 w-8 text-white opacity-0 transition-opacity group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
@@ -176,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-import { useApi } from "~/composables/api/useApi";
+import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 
 const props = defineProps<{
@@ -212,6 +224,27 @@ const annotatingPhotoUrl = computed(() => {
 const showDeleteConfirm = ref(false);
 const deletingPhoto = ref<any>(null);
 
+const revokeLocalPreviewUrls = (items: any[]) => {
+  if (!process.client) return;
+  for (const item of items) {
+    if (item?._offlinePreviewUrl) {
+      URL.revokeObjectURL(item._offlinePreviewUrl);
+    }
+  }
+};
+
+const addQueuedPhotoPreview = (file: File, queueId: string, photoName: string) => {
+  if (!process.client) return;
+  const previewUrl = URL.createObjectURL(file);
+  photos.value.unshift({
+    _id: `offline-${queueId}`,
+    storageKey: photoName || file.name,
+    annotations: [],
+    _offlineQueued: true,
+    _offlinePreviewUrl: previewUrl
+  });
+};
+
 const loadTask = async () => {
   loading.value = true;
   error.value = "";
@@ -221,6 +254,7 @@ const loadTask = async () => {
       api.get<any[]>(`/tasks/${props.taskId}/photos`)
     ]);
     task.value = taskData;
+    revokeLocalPreviewUrls(photos.value);
     photos.value = photosData || [];
   } catch (err) {
     error.value = (err as Error).message;
@@ -240,6 +274,8 @@ const handlePhotoUploadWithMetadata = async (data: {
   showPhotoUploadModal.value = false;
 
   try {
+    let queuedCount = 0;
+
     // Upload each file with metadata
     for (let i = 0; i < data.files.length; i++) {
       const file = data.files[i];
@@ -258,17 +294,24 @@ const handlePhotoUploadWithMetadata = async (data: {
       if (data.location) formData.append("location", data.location);
       if (data.category) formData.append("category", data.category);
 
-      await api.upload("/photos", formData);
+      const result = await api.upload("/photos", formData);
+      if (isOfflineQueuedResponse(result)) {
+        queuedCount += 1;
+        addQueuedPhotoPreview(file, result.queueId, photoName);
+      }
     }
 
-    toast.push(
-      data.files.length > 1
-        ? `Đã tải ${data.files.length} ảnh thành công`
-        : "Tải ảnh thành công",
-      "success"
-    );
+    const uploadedNow = data.files.length - queuedCount;
+    if (uploadedNow > 0) {
+      toast.push(uploadedNow > 1 ? `Da tai ${uploadedNow} anh thanh cong` : "Tai anh thanh cong", "success");
+    }
+    if (queuedCount > 0) {
+      toast.push(`Da luu tam ${queuedCount} anh, se tu dong bo khi co mang`, "info");
+    }
 
-    await loadTask();
+    if (process.client && navigator.onLine && uploadedNow > 0) {
+      await loadTask();
+    }
     emit("updated");
   } catch (err) {
     toast.push((err as Error).message, "error");
@@ -308,6 +351,9 @@ const handlePhotoUpload = async (e: Event) => {
 };
 
 const getPhotoUrl = (photo: any) => {
+  if (photo?._offlinePreviewUrl) {
+    return photo._offlinePreviewUrl;
+  }
   const base = `${config.public.apiBase}/photos/${photo._id}/file`;
   return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
 };
@@ -353,6 +399,10 @@ const exportExcel = async () => {
 };
 
 const openAnnotator = (photo: any) => {
+  if (photo?._offlineQueued) {
+    toast.push("Anh dang cho dong bo. Vui long thu lai sau.", "info");
+    return;
+  }
   console.log("openAnnotator called", {
     photoId: photo._id,
     annotations: photo.annotations
@@ -367,12 +417,17 @@ const closeAnnotator = () => {
 
 const handleAnnotationSaved = async () => {
   console.log("handleAnnotationSaved called");
-  // Tải lại danh sách ảnh để cập nhật annotations
-  await loadTask();
+  if (process.client && navigator.onLine) {
+    await loadTask();
+  }
   annotatingPhoto.value = null;
 };
 
 const handleDeletePhoto = (photo: any) => {
+  if (photo?._offlineQueued) {
+    toast.push("Anh dang cho dong bo, chua the xoa.", "info");
+    return;
+  }
   console.log("handleDeletePhoto called with:", photo._id);
   deletingPhoto.value = photo;
   showDeleteConfirm.value = true;
@@ -384,9 +439,17 @@ const confirmDeletePhoto = async () => {
   console.log("Deleting photo:", deletingPhoto.value._id);
 
   try {
-    await api.delete(`/photos/${deletingPhoto.value._id}`);
-    toast.push("Đã xoá ảnh", "success");
-    await loadTask();
+    const result = await api.delete(`/photos/${deletingPhoto.value._id}`);
+    const queued = isOfflineQueuedResponse(result);
+    photos.value = photos.value.filter((photo) => photo._id !== deletingPhoto.value._id);
+    if (queued) {
+      toast.push("Lenh xoa da luu tam, se dong bo khi co mang", "info");
+    } else {
+      toast.push("Đã xoá ảnh", "success");
+    }
+    if (process.client && navigator.onLine && !queued) {
+      await loadTask();
+    }
     emit("updated");
   } catch (err) {
     console.error("Delete photo error:", err);
@@ -428,6 +491,10 @@ const categoryLabel = (category: string) => {
   };
   return labels[category] || category;
 };
+
+onUnmounted(() => {
+  revokeLocalPreviewUrls(photos.value);
+});
 
 // Load on mount and when taskId changes
 watch(() => props.taskId, loadTask, { immediate: true });

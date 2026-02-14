@@ -15,6 +15,7 @@ export const config = {
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET ?? "",
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL ?? "15m",
   refreshTokenTtl: process.env.REFRESH_TOKEN_TTL ?? "7d",
+  cookieSecure: process.env.COOKIE_SECURE === "true", // Secure cookies for HTTPS, false for HTTP
   adminEmail: process.env.ADMIN_EMAIL ?? "",
   adminPassword: process.env.ADMIN_PASSWORD ?? "",
   uploadMaxPdfMb: toNumber(process.env.UPLOAD_MAX_PDF_MB, 100),
