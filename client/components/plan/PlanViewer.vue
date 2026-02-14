@@ -1,6 +1,5 @@
-﻿<template>
+<template>
   <div class="relative h-full rounded-2xl border border-slate-200 bg-white shadow-sm">
-    <!-- Header -->
     <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 sm:px-4 sm:py-3">
       <div class="min-w-0">
         <p class="text-[10px] uppercase tracking-widest text-slate-400 sm:text-xs">Plan View</p>
@@ -14,16 +13,23 @@
       </div>
     </div>
 
-    <!-- Placement mode banner -->
     <div
       v-if="placingPin"
       class="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700 sm:px-4 sm:py-2 sm:text-xs"
     >
       <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-          d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-          d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+        />
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+        />
       </svg>
       <span class="font-medium">Nhấn vào bản vẽ để đặt pin</span>
       <button
@@ -34,13 +40,11 @@
       </button>
     </div>
 
-    <!-- Drawing viewport -->
     <div
       ref="viewportRef"
-      class="relative overflow-auto bg-slate-50"
+      class="relative h-[55vh] overflow-hidden bg-slate-50 sm:h-[70vh]"
       style="touch-action: pan-y pinch-zoom"
-      :class="placingPin ? 'h-[50vh] sm:h-[65vh]' : 'h-[55vh] sm:h-[70vh]'"
-      @wheel.prevent="handleWheel"
+      @wheel="handleWheel"
       @pointerdown="handleViewportPointerDown"
       @pointermove="handlePointerMove"
       @pointerup="handlePointerUp"
@@ -61,10 +65,9 @@
         :class="placingPin ? 'cursor-crosshair' : 'cursor-default'"
       >
         <div ref="contentRef" class="relative" :style="transformStyle">
-          <!-- PDF rendered via PDF.js canvas - hoạt động trên cả mobile -->
-          <div ref="pdfContainerRef" class="w-full">
-            <div v-if="pdfRendering" class="flex items-center justify-center py-12">
-              <svg class="h-5 w-5 animate-spin text-slate-400 mr-2" fill="none" viewBox="0 0 24 24">
+          <div ref="pdfContainerRef" class="pointer-events-none relative w-full select-none">
+            <div v-if="pdfRendering && !pdfHasContent" class="flex items-center justify-center py-12">
+              <svg class="mr-2 h-5 w-5 animate-spin text-slate-400" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
               </svg>
@@ -72,12 +75,10 @@
             </div>
           </div>
 
-          <!-- Overlay: pins, zones, placement catcher - height sync với PDF qua JS -->
           <div
-            ref="overlayRef"
             class="absolute inset-0"
             :class="[
-              placingPin || draggingPinId ? 'pointer-events-auto z-10' : 'pointer-events-none',
+              'pointer-events-auto z-10',
               placingPin && 'cursor-crosshair',
               draggingPinId && 'cursor-grabbing'
             ]"
@@ -85,30 +86,27 @@
             @mousemove.self="updateGhostPin"
             @mouseleave="ghostPin = null"
           >
-            <!-- Ghost pin -->
             <div
               v-if="placingPin && ghostPin"
-              class="pointer-events-none absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-dashed border-brand-400 bg-brand-500/60 text-white shadow-lg animate-pulse"
-              :style="{ left: `${ghostPin.x * 100}%`, top: `${ghostPin.y * 100}%` }"
+              class="pointer-events-none absolute flex items-center justify-center rounded-full border-2 border-dashed border-brand-400 bg-brand-500/60 text-white shadow-lg animate-pulse"
+              :style="ghostPinStyle(ghostPin)"
             >
               <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 4v16m8-8H4" />
               </svg>
             </div>
 
-            <!-- Existing pins (draggable) -->
             <div
               v-for="pin in pins"
               :key="pin._id || pin.id"
-              class="pin-element pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 font-bold text-white shadow-lg transition-all duration-100"
+              class="pin-element pointer-events-auto absolute flex items-center justify-center rounded-full border-2 font-bold text-white shadow-lg transition-all duration-100"
               :class="[
-                'h-6 w-6 text-[9px] sm:h-5 sm:w-5 sm:text-[8px]',
                 pinBg(pin.status),
-                isSelected(pin) ? 'ring-2 ring-offset-1 ring-brand-400 border-white scale-125 z-20' : 'border-white',
-                !placingPin && !draggingPinId ? 'cursor-pointer hover:scale-125' : '',
-                draggingPinId === (pin._id || pin.id) ? 'cursor-grabbing scale-150 opacity-80 z-30' : ''
+                isSelected(pin) ? 'ring-2 ring-offset-1 ring-brand-400 border-white z-20' : 'border-white',
+                !placingPin && !draggingPinId ? 'cursor-pointer pin-hoverable' : '',
+                draggingPinId === (pin._id || pin.id) ? 'cursor-grabbing opacity-80 z-30' : ''
               ]"
-              :style="pinPos(pin)"
+              :style="pinStyle(pin)"
               :title="pin.pinName || pin.pinCode || 'Pin'"
               @click.stop="handlePinClick(pin)"
               @pointerdown.stop="startPinDrag($event, pin)"
@@ -116,7 +114,6 @@
               •
             </div>
 
-            <!-- Zones -->
             <div
               v-for="zone in zones"
               :key="zone._id || zone.id"
@@ -170,14 +167,26 @@ const emit = defineEmits<{
   (e: "cancel-place"): void;
 }>();
 
-// Refs
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 10;
+const ZOOM_STEP = 0.2;
+const PIN_BASE_SCREEN_SIZE_PX = 22;
+const PIN_MIN_SCREEN_SIZE_PX = 16;
+const PIN_MAX_SCREEN_SIZE_PX = 30;
+const PIN_SCREEN_ADJUST_POWER = 0.15;
+const PIN_DRAG_THRESHOLD_PX = 4;
+const MAX_CANVAS_DIMENSION = 12288;
+const MAX_QUALITY_SCALE = 10;
+const SHARPEN_DEBOUNCE_MS = 220;
+const VIEW_SAFE_MARGIN = 48;
+const WHEEL_ZOOM_REQUIRES_SHIFT = true;
+
 const viewportRef = ref<HTMLElement | null>(null);
 const contentRef = ref<HTMLElement | null>(null);
-const overlayRef = ref<HTMLElement | null>(null);
 const pdfContainerRef = ref<HTMLElement | null>(null);
 const pdfRendering = ref(false);
+const pdfHasContent = ref(false);
 
-// Zoom & pan
 const zoom = ref(1);
 const offset = reactive({ x: 0, y: 0 });
 const panning = ref(false);
@@ -185,15 +194,13 @@ const panStart = reactive({ x: 0, y: 0 });
 const panOrigin = reactive({ x: 0, y: 0 });
 const didPan = ref(false);
 
-// Pin dragging
 const draggingPinId = ref<string | null>(null);
 const draggingPinPos = ref<{ x: number; y: number } | null>(null);
 const pinDragMoved = ref(false);
+const pinDragStartClient = ref<{ x: number; y: number } | null>(null);
 
-// Ghost pin khi đang placement
 const ghostPin = ref<{ x: number; y: number } | null>(null);
 
-// Computed
 const drawingTitle = computed(() => props.drawing?.name || "Chưa chọn bản vẽ");
 const token = useState<string | null>("auth-token", () => null);
 const fileUrl = computed(() => {
@@ -209,15 +216,29 @@ const transformStyle = computed(() => ({
 }));
 
 const clamp = (v: number) => Math.min(Math.max(v, 0), 1);
+const clampZoom = (v: number) => Math.min(Math.max(v, MIN_ZOOM), MAX_ZOOM);
+const clampInRange = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
-/**
- * Tính toạ độ chuẩn hoá (0–1) từ pointer event,
- * dựa trên overlay (là child của contentRef, bị transform).
- * Dùng overlayRef.getBoundingClientRect() — nó đã áp dụng transform
- * nên toạ độ luôn chính xác bất kể zoom/pan.
- */
+const pinZoomFactor = computed(() => Math.max(zoom.value, MIN_ZOOM));
+
+const pinScreenSizePx = computed(() => {
+  // Giu kich thuoc pin tren man hinh on dinh, tranh qua to khi zoom lon.
+  const adjustedScreenSize = PIN_BASE_SCREEN_SIZE_PX * Math.pow(1 / pinZoomFactor.value, PIN_SCREEN_ADJUST_POWER);
+  return clampInRange(adjustedScreenSize, PIN_MIN_SCREEN_SIZE_PX, PIN_MAX_SCREEN_SIZE_PX);
+});
+
+const pinBaseSizePx = computed(() => {
+  // Counter-scale pin theo zoom để giữ kích thước màn hình ổn định hơn.
+  return pinScreenSizePx.value / pinZoomFactor.value;
+});
+
+const pinFontSizePx = computed(() => {
+  const screenFontSize = clampInRange(pinScreenSizePx.value * 0.45, 8, 12);
+  return screenFontSize / pinZoomFactor.value;
+});
+
 const normalizedCoords = (event: PointerEvent | MouseEvent): { x: number; y: number } | null => {
-  const el = overlayRef.value;
+  const el = contentRef.value;
   if (!el) return null;
   const rect = el.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return null;
@@ -227,28 +248,88 @@ const normalizedCoords = (event: PointerEvent | MouseEvent): { x: number; y: num
   };
 };
 
-// === Zoom ===
+const clampOffsetToViewport = () => {
+  const viewport = viewportRef.value;
+  const content = contentRef.value;
+  if (!viewport || !content) return;
+
+  const scale = zoom.value;
+  const contentWidth = Math.max(1, content.offsetWidth * scale);
+  const contentHeight = Math.max(1, content.offsetHeight * scale);
+  const viewportWidth = viewport.clientWidth;
+  const viewportHeight = viewport.clientHeight;
+
+  let minX = viewportWidth - contentWidth - VIEW_SAFE_MARGIN;
+  let maxX = VIEW_SAFE_MARGIN;
+  if (contentWidth <= viewportWidth) {
+    const centerX = (viewportWidth - contentWidth) / 2;
+    minX = centerX;
+    maxX = centerX;
+  }
+
+  let minY = viewportHeight - contentHeight - VIEW_SAFE_MARGIN;
+  let maxY = VIEW_SAFE_MARGIN;
+  if (contentHeight <= viewportHeight) {
+    const centerY = (viewportHeight - contentHeight) / 2;
+    minY = centerY;
+    maxY = centerY;
+  }
+
+  offset.x = clampInRange(offset.x, minX, maxX);
+  offset.y = clampInRange(offset.y, minY, maxY);
+};
+
+const applyZoom = (targetZoom: number, anchorClient?: { x: number; y: number }) => {
+  const viewport = viewportRef.value;
+  const nextZoom = clampZoom(targetZoom);
+  const prevZoom = zoom.value;
+  if (!viewport || prevZoom === nextZoom) {
+    zoom.value = nextZoom;
+    return;
+  }
+
+  const rect = viewport.getBoundingClientRect();
+  const anchorX = anchorClient?.x ?? rect.left + rect.width / 2;
+  const anchorY = anchorClient?.y ?? rect.top + rect.height / 2;
+
+  const viewportX = anchorX - rect.left;
+  const viewportY = anchorY - rect.top;
+  const worldX = (viewportX - offset.x) / prevZoom;
+  const worldY = (viewportY - offset.y) / prevZoom;
+
+  zoom.value = nextZoom;
+  offset.x = viewportX - worldX * nextZoom;
+  offset.y = viewportY - worldY * nextZoom;
+  clampOffsetToViewport();
+  scheduleDetailRender(SHARPEN_DEBOUNCE_MS);
+};
+
 const zoomIn = () => {
-  zoom.value = Math.min(zoom.value + 0.2, 10);
-  // No re-render needed - canvas already at extreme high resolution (10x), CSS handles scale
+  applyZoom(zoom.value + ZOOM_STEP);
 };
+
 const zoomOut = () => {
-  zoom.value = Math.max(zoom.value - 0.2, 0.3);
-  // No re-render needed - canvas already at extreme high resolution (10x), CSS handles scale
+  applyZoom(zoom.value - ZOOM_STEP);
 };
+
 const resetView = () => {
   zoom.value = 1;
   offset.x = 0;
   offset.y = 0;
-  // No re-render needed - canvas already at extreme high resolution (10x), CSS handles scale
-};
-const handleWheel = (event: WheelEvent) => {
-  const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
-  zoom.value = Math.min(Math.max(zoom.value * factor, 0.3), 10);
-  // No re-render needed - canvas already at extreme high resolution (10x), CSS handles scale
+  nextTick(() => {
+    clampOffsetToViewport();
+  });
+  scheduleDetailRender(0);
 };
 
-// === Pan (kéo bản vẽ) ===
+const handleWheel = (event: WheelEvent) => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  if (WHEEL_ZOOM_REQUIRES_SHIFT && !event.shiftKey) return;
+  event.preventDefault();
+  const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+  applyZoom(zoom.value * factor, { x: event.clientX, y: event.clientY });
+};
+
 const startPan = (event: PointerEvent) => {
   if (draggingPinId.value) return;
   didPan.value = false;
@@ -259,19 +340,26 @@ const startPan = (event: PointerEvent) => {
   panOrigin.y = offset.y;
 };
 
-// Bắt đầu pan khi kéo trên nền bản vẽ
 const handleViewportPointerDown = (event: PointerEvent) => {
+  if (event.button !== 0) return;
   const target = event.target as HTMLElement;
   if (props.placingPin) return;
   if (target.closest(".pin-element")) return;
   startPan(event);
 };
 
-// pointermove đặt ở viewport (bên ngoài content transform)
-// để nhận event ngay cả khi pointer vượt ra ngoài pin/overlay
 const handlePointerMove = (event: PointerEvent) => {
-  // Đang kéo pin → cập nhật vị trí pin
   if (draggingPinId.value) {
+    if (!pinDragStartClient.value) return;
+    const deltaX = event.clientX - pinDragStartClient.value.x;
+    const deltaY = event.clientY - pinDragStartClient.value.y;
+    const movedEnough = Math.hypot(deltaX, deltaY) >= PIN_DRAG_THRESHOLD_PX;
+
+    if (!pinDragMoved.value && !movedEnough) {
+      event.preventDefault();
+      return;
+    }
+
     const coords = normalizedCoords(event);
     if (coords) {
       draggingPinPos.value = coords;
@@ -280,17 +368,18 @@ const handlePointerMove = (event: PointerEvent) => {
     event.preventDefault();
     return;
   }
-  // Đang pan → cập nhật offset
+
   if (!panning.value) return;
   const dx = event.clientX - panStart.x;
   const dy = event.clientY - panStart.y;
   if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didPan.value = true;
   offset.x = panOrigin.x + dx;
   offset.y = panOrigin.y + dy;
+  clampOffsetToViewport();
+  scheduleDetailRender(90);
 };
 
 const handlePointerUp = () => {
-  // Kết thúc kéo pin → emit vị trí mới (chỉ khi thật sự đã di chuyển)
   if (draggingPinId.value) {
     if (pinDragMoved.value && draggingPinPos.value) {
       emit("pin-move", {
@@ -302,17 +391,19 @@ const handlePointerUp = () => {
     draggingPinId.value = null;
     draggingPinPos.value = null;
     pinDragMoved.value = false;
+    pinDragStartClient.value = null;
     return;
   }
+
   panning.value = false;
   if (didPan.value) {
     setTimeout(() => {
       didPan.value = false;
     }, 0);
+    scheduleDetailRender(60);
   }
 };
 
-// === Pin placement (đặt pin mới) ===
 const handleOverlayClick = (event: MouseEvent) => {
   if (!props.placingPin || didPan.value) return;
   const coords = normalizedCoords(event);
@@ -321,14 +412,15 @@ const handleOverlayClick = (event: MouseEvent) => {
 };
 
 const updateGhostPin = (event: MouseEvent) => {
-  if (!props.placingPin) { ghostPin.value = null; return; }
+  if (!props.placingPin) {
+    ghostPin.value = null;
+    return;
+  }
   const coords = normalizedCoords(event);
   ghostPin.value = coords;
 };
 
-// === Pin click & drag ===
 const handlePinClick = (pin: Pin) => {
-  // Chỉ xử lý click khi không đang placement và không vừa pan/kéo
   if (props.placingPin || didPan.value || pinDragMoved.value) return;
   emit("pin-click", pin);
 };
@@ -337,18 +429,18 @@ const startPinDrag = (event: PointerEvent, pin: Pin) => {
   if (props.placingPin) return;
   const id = pin._id || pin.id;
   if (!id) return;
-  // Bắt đầu kéo pin
+
   draggingPinId.value = id;
   pinDragMoved.value = false;
-  const coords = normalizedCoords(event);
-  if (coords) draggingPinPos.value = coords;
-  // Không dùng setPointerCapture vì sẽ route event vào pin
-  // thay vì viewport (nơi có handlePointerMove).
-  // Thay vào đó ta dựa vào event bubbling + object pointer-events-none.
+  pinDragStartClient.value = { x: event.clientX, y: event.clientY };
+  draggingPinPos.value = {
+    x: clamp(pin.pinX),
+    y: clamp(pin.pinY)
+  };
+
   event.preventDefault();
 };
 
-// === Pin position (vị trí tạm khi kéo) ===
 const pinPos = (pin: Pin) => {
   const id = pin._id || pin.id;
   if (draggingPinId.value === id && draggingPinPos.value) {
@@ -363,12 +455,43 @@ const pinPos = (pin: Pin) => {
   };
 };
 
+const pinRenderScale = (pin: Pin) => {
+  const id = pin._id || pin.id;
+  let scale = 1;
+  if (isSelected(pin)) scale *= 1.14;
+  if (draggingPinId.value === id) scale *= 1.2;
+  return scale;
+};
+
+const pinStyle = (pin: Pin) => {
+  const basePos = pinPos(pin);
+  const size = pinBaseSizePx.value;
+  return {
+    ...basePos,
+    "--pin-scale": `${pinRenderScale(pin)}`,
+    width: `${size}px`,
+    height: `${size}px`,
+    fontSize: `${pinFontSizePx.value}px`,
+    transform: "translate(-50%, -50%) scale(var(--pin-scale))"
+  };
+};
+
+const ghostPinStyle = (point: { x: number; y: number }) => {
+  const size = pinBaseSizePx.value;
+  return {
+    left: `${point.x * 100}%`,
+    top: `${point.y * 100}%`,
+    width: `${size}px`,
+    height: `${size}px`,
+    transform: "translate(-50%, -50%)"
+  };
+};
+
 const isSelected = (pin: Pin) => {
   const id = pin._id || pin.id;
   return id && id === props.selectedPinId;
 };
 
-// === Visual helpers ===
 const pinBg = (status: string) => {
   if (status === "done") return "bg-emerald-500";
   if (status === "blocked") return "bg-rose-500";
@@ -389,15 +512,22 @@ const zoneStyle = (shape?: Zone["shape"]) => ({
   height: `${clamp(shape?.height ?? 0) * 100}%`
 });
 
-// === PDF.js rendering ===
 let pdfjsLibPromise: Promise<any> | null = null;
 let currentPdfTask: any = null;
 let currentPdfDoc: any = null;
+let currentPdfPage: any = null;
 let currentPdfUrl = "";
 let renderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let detailRenderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let renderingInProgress = false;
 let queuedRender = false;
 let renderToken = 0;
+let detailRenderToken = 0;
+let currentDetailRenderTask: any = null;
+let pageBaseMetrics: { fitScale: number; width: number; height: number } | null = null;
+let baseCanvasEl: HTMLCanvasElement | null = null;
+let detailCanvasEl: HTMLCanvasElement | null = null;
+let viewportResizeObserver: ResizeObserver | null = null;
 
 const getPdfJsLib = async () => {
   if (!pdfjsLibPromise) {
@@ -410,31 +540,77 @@ const getPdfJsLib = async () => {
   return pdfjsLibPromise;
 };
 
+const cancelDetailRenderTask = () => {
+  if (!currentDetailRenderTask) return;
+  try {
+    currentDetailRenderTask.cancel();
+  } catch {
+    // ignore
+  }
+  currentDetailRenderTask = null;
+};
+
 const clearRenderedCanvases = (container: HTMLElement) => {
+  if (detailRenderDebounceTimer) {
+    clearTimeout(detailRenderDebounceTimer);
+    detailRenderDebounceTimer = null;
+  }
+  cancelDetailRenderTask();
   const canvases = container.querySelectorAll("canvas");
   canvases.forEach((canvas) => canvas.remove());
+  baseCanvasEl = null;
+  detailCanvasEl = null;
+  pageBaseMetrics = null;
+  pdfHasContent.value = false;
+};
+
+const ensureBaseCanvas = (container: HTMLElement) => {
+  if (!baseCanvasEl || !container.contains(baseCanvasEl)) {
+    baseCanvasEl = document.createElement("canvas");
+    baseCanvasEl.style.display = "block";
+    baseCanvasEl.style.position = "relative";
+    baseCanvasEl.style.zIndex = "1";
+    container.appendChild(baseCanvasEl);
+  }
+  return baseCanvasEl;
+};
+
+const ensureDetailCanvas = (container: HTMLElement) => {
+  if (!detailCanvasEl || !container.contains(detailCanvasEl)) {
+    detailCanvasEl = document.createElement("canvas");
+    detailCanvasEl.style.position = "absolute";
+    detailCanvasEl.style.left = "0";
+    detailCanvasEl.style.top = "0";
+    detailCanvasEl.style.zIndex = "2";
+    detailCanvasEl.style.pointerEvents = "none";
+    container.appendChild(detailCanvasEl);
+  }
+  return detailCanvasEl;
 };
 
 const destroyCurrentPdfTask = () => {
-  if (currentPdfTask) {
-    try {
-      currentPdfTask.destroy();
-    } catch {
-      // ignore
-    }
-    currentPdfTask = null;
+  if (!currentPdfTask) return;
+  try {
+    currentPdfTask.destroy();
+  } catch {
+    // ignore
   }
+  currentPdfTask = null;
 };
 
 const destroyCurrentPdfDoc = async () => {
-  if (currentPdfDoc) {
-    try {
-      await currentPdfDoc.destroy();
-    } catch {
-      // ignore
-    }
-    currentPdfDoc = null;
+  currentPdfPage = null;
+  pageBaseMetrics = null;
+  baseCanvasEl = null;
+  detailCanvasEl = null;
+  cancelDetailRenderTask();
+  if (!currentPdfDoc) return;
+  try {
+    await currentPdfDoc.destroy();
+  } catch {
+    // ignore
   }
+  currentPdfDoc = null;
 };
 
 const loadPdfDocument = async () => {
@@ -474,45 +650,47 @@ const renderLoadedPdf = async () => {
 
   try {
     const doc = currentPdfDoc;
-    const targetWidth = Math.max(
-      480,
-      viewportRef.value?.clientWidth ?? container.clientWidth ?? 800
-    );
-    // Extreme high-resolution rendering: 10-12x for sharpness up to 1000% zoom
-    // This consumes more memory but ensures sharp display at extreme zoom levels
-    const outputScale = Math.min(window.devicePixelRatio || 1, 2) * 10;
-    const renderedCanvases: HTMLCanvasElement[] = [];
+    const viewportWidth = viewportRef.value?.clientWidth ?? container.clientWidth ?? 800;
+    const targetWidth = Math.max(480, Math.min(viewportWidth, 1200));
 
-    for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
-      const page = await doc.getPage(pageNum);
-      const naturalViewport = page.getViewport({ scale: 1 });
-      const fitScale = targetWidth / naturalViewport.width;
-      // Render at BASE resolution (zoom handled by CSS for smooth zoom)
-      const viewport = page.getViewport({ scale: fitScale });
-
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
-      canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
-      canvas.style.width = `${Math.floor(viewport.width)}px`;
-      canvas.style.height = `${Math.floor(viewport.height)}px`;
-      canvas.style.display = "block";
-      canvas.style.imageRendering = "high-quality";
-
-      const context = canvas.getContext("2d");
-      if (!context) continue;
-
-      await page.render({
-        canvasContext: context,
-        viewport,
-        transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0]
-      }).promise;
-
-      renderedCanvases.push(canvas);
-    }
+    // Task pin hiện tại không có pageIndex, nên luôn render trang đầu để đảm bảo sync toạ độ tuyệt đối.
+    const page = await doc.getPage(1);
+    currentPdfPage = page;
+    const naturalViewport = page.getViewport({ scale: 1 });
+    const fitScale = targetWidth / naturalViewport.width;
+    const baseViewport = page.getViewport({ scale: fitScale });
+    const basePixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
 
     if (localRenderToken !== renderToken) return;
     clearRenderedCanvases(container);
-    renderedCanvases.forEach((canvas) => container.appendChild(canvas));
+
+    const baseCanvas = ensureBaseCanvas(container);
+    baseCanvas.width = Math.max(1, Math.floor(baseViewport.width * basePixelRatio));
+    baseCanvas.height = Math.max(1, Math.floor(baseViewport.height * basePixelRatio));
+    baseCanvas.style.width = `${Math.floor(baseViewport.width)}px`;
+    baseCanvas.style.height = `${Math.floor(baseViewport.height)}px`;
+
+    const baseContext = baseCanvas.getContext("2d");
+    if (!baseContext) return;
+
+    await page.render({
+      canvasContext: baseContext,
+      viewport: baseViewport,
+      transform: basePixelRatio === 1 ? undefined : [basePixelRatio, 0, 0, basePixelRatio, 0, 0]
+    }).promise;
+
+    if (localRenderToken !== renderToken) return;
+    pageBaseMetrics = {
+      fitScale,
+      width: Math.floor(baseViewport.width),
+      height: Math.floor(baseViewport.height)
+    };
+    ensureDetailCanvas(container);
+    pdfHasContent.value = true;
+    nextTick(() => {
+      clampOffsetToViewport();
+      void renderVisibleTile();
+    });
   } catch (err: any) {
     if (err?.name !== "RenderingCancelledException") {
       console.error("PDF render error:", err);
@@ -526,6 +704,101 @@ const renderLoadedPdf = async () => {
       void renderLoadedPdf();
     }
   }
+};
+
+const renderVisibleTile = async () => {
+  const container = pdfContainerRef.value;
+  const viewport = viewportRef.value;
+  if (!container || !viewport || !currentPdfPage || !pageBaseMetrics) return;
+
+  const metrics = pageBaseMetrics;
+  const safeZoom = Math.max(zoom.value, MIN_ZOOM);
+  const paddingScreen = 220;
+  const paddingWorld = paddingScreen / safeZoom;
+
+  const left = clampInRange((-offset.x) / safeZoom - paddingWorld, 0, metrics.width);
+  const top = clampInRange((-offset.y) / safeZoom - paddingWorld, 0, metrics.height);
+  const right = clampInRange((viewport.clientWidth - offset.x) / safeZoom + paddingWorld, 0, metrics.width);
+  const bottom = clampInRange((viewport.clientHeight - offset.y) / safeZoom + paddingWorld, 0, metrics.height);
+
+  if (right <= left || bottom <= top) {
+    if (detailCanvasEl) detailCanvasEl.style.display = "none";
+    return;
+  }
+
+  const tileWorldWidth = Math.max(1, right - left);
+  const tileWorldHeight = Math.max(1, bottom - top);
+  const deviceScale = Math.min(window.devicePixelRatio || 1, 1.5);
+  let qualityScale = Math.max(1, Math.min(safeZoom, MAX_QUALITY_SCALE));
+
+  const maxPixelCurrent = Math.max(
+    tileWorldWidth * qualityScale * deviceScale,
+    tileWorldHeight * qualityScale * deviceScale
+  );
+  if (maxPixelCurrent > MAX_CANVAS_DIMENSION) {
+    const shrinkRatio = MAX_CANVAS_DIMENSION / maxPixelCurrent;
+    qualityScale = Math.max(1, qualityScale * shrinkRatio);
+  }
+
+  const tileViewport = currentPdfPage.getViewport({ scale: metrics.fitScale * qualityScale });
+  const pixelWidth = Math.max(1, Math.floor(tileWorldWidth * qualityScale * deviceScale));
+  const pixelHeight = Math.max(1, Math.floor(tileWorldHeight * qualityScale * deviceScale));
+
+  const tileCanvas = ensureDetailCanvas(container);
+  tileCanvas.style.display = "block";
+  tileCanvas.style.left = `${Math.floor(left)}px`;
+  tileCanvas.style.top = `${Math.floor(top)}px`;
+  tileCanvas.style.width = `${Math.floor(tileWorldWidth)}px`;
+  tileCanvas.style.height = `${Math.floor(tileWorldHeight)}px`;
+  tileCanvas.width = pixelWidth;
+  tileCanvas.height = pixelHeight;
+
+  const tileContext = tileCanvas.getContext("2d");
+  if (!tileContext) return;
+
+  cancelDetailRenderTask();
+  const localToken = ++detailRenderToken;
+  currentDetailRenderTask = currentPdfPage.render({
+    canvasContext: tileContext,
+    viewport: tileViewport,
+    transform: [
+      deviceScale,
+      0,
+      0,
+      deviceScale,
+      -left * qualityScale * deviceScale,
+      -top * qualityScale * deviceScale
+    ]
+  });
+
+  try {
+    await currentDetailRenderTask.promise;
+  } catch (err: any) {
+    if (err?.name !== "RenderingCancelledException") {
+      console.error("PDF tile render error:", err);
+    }
+  } finally {
+    if (localToken === detailRenderToken) {
+      currentDetailRenderTask = null;
+    }
+  }
+};
+
+const scheduleDetailRender = (delayMs = SHARPEN_DEBOUNCE_MS) => {
+  if (detailRenderDebounceTimer) {
+    clearTimeout(detailRenderDebounceTimer);
+    detailRenderDebounceTimer = null;
+  }
+
+  if (delayMs <= 0) {
+    void renderVisibleTile();
+    return;
+  }
+
+  detailRenderDebounceTimer = setTimeout(() => {
+    detailRenderDebounceTimer = null;
+    void renderVisibleTile();
+  }, delayMs);
 };
 
 const schedulePdfRender = (delayMs = 0) => {
@@ -563,30 +836,51 @@ const handleWindowResize = () => {
 watch(
   () => props.drawing?._id || props.drawing?.id || "",
   () => {
-    zoom.value = 1;
-    offset.x = 0;
-    offset.y = 0;
+    resetView();
+    draggingPinId.value = null;
+    draggingPinPos.value = null;
+    pinDragMoved.value = false;
+    pinDragStartClient.value = null;
+    ghostPin.value = null;
+  }
+);
+
+watch(
+  () => fileUrl.value,
+  () => {
     nextTick(() => {
       void reloadPdfAndRender();
     });
-  }
+  },
+  { immediate: true }
 );
 
 onMounted(() => {
   window.addEventListener("resize", handleWindowResize);
-  if (fileUrl.value) {
-    nextTick(() => {
-      void reloadPdfAndRender();
+
+  if (typeof ResizeObserver !== "undefined" && viewportRef.value) {
+    viewportResizeObserver = new ResizeObserver(() => {
+      schedulePdfRender(120);
     });
+    viewportResizeObserver.observe(viewportRef.value);
   }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", handleWindowResize);
+  if (viewportResizeObserver) {
+    viewportResizeObserver.disconnect();
+    viewportResizeObserver = null;
+  }
   if (renderDebounceTimer) {
     clearTimeout(renderDebounceTimer);
     renderDebounceTimer = null;
   }
+  if (detailRenderDebounceTimer) {
+    clearTimeout(detailRenderDebounceTimer);
+    detailRenderDebounceTimer = null;
+  }
+  cancelDetailRenderTask();
   destroyCurrentPdfTask();
   void destroyCurrentPdfDoc();
 });
@@ -597,7 +891,6 @@ onBeforeUnmount(() => {
   @apply rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100;
 }
 
-/* Optimize canvas rendering quality */
 canvas {
   image-rendering: -webkit-optimize-contrast;
   image-rendering: crisp-edges;
@@ -606,5 +899,9 @@ canvas {
   -webkit-backface-visibility: hidden;
   transform: translateZ(0);
   -webkit-transform: translateZ(0);
+}
+
+.pin-hoverable:hover {
+  transform: translate(-50%, -50%) scale(calc(var(--pin-scale, 1) * 1.12)) !important;
 }
 </style>

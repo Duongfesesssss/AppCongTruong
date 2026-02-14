@@ -246,7 +246,7 @@
 </template>
 
 <script setup lang="ts">
-import { useApi } from "~/composables/api/useApi";
+import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 
 export type DimensionLine = {
@@ -390,11 +390,15 @@ const previewPixelLength = computed(() => {
 const handleSave = async () => {
   saving.value = true;
   try {
-    await api.patch(`/photos/${props.photoId}`, {
+    const result = await api.patch(`/photos/${props.photoId}`, {
       annotations: annotations.value
     });
-    toast.push("Đã lưu chú thích đo đạc", "success");
-    emit("saved");
+    if (isOfflineQueuedResponse(result)) {
+      toast.push("Da luu tam chu thich, se dong bo khi co mang", "info");
+    } else {
+      toast.push("Đã lưu chú thích đo đạc", "success");
+      emit("saved");
+    }
   } catch (err) {
     toast.push((err as Error).message, "error");
   } finally {
