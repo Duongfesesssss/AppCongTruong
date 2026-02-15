@@ -24,6 +24,17 @@ type ApiFailure = {
   error?: { code?: string; message?: string };
 };
 
+type ApiSuccess = {
+  success: true;
+  data?: unknown;
+};
+
+type SyncItemResult = {
+  createdTaskId?: string;
+};
+
+type OfflineTaskIdMap = Record<string, string>;
+
 export type QueuedRequestResult = {
   queueId: string;
   queuedAt: number;
@@ -36,6 +47,7 @@ const DB_NAME = "appcongtruong-offline";
 const DB_VERSION = 1;
 const STORE_NAME = "outbox";
 const OFFLINE_ALLOWLIST = ["/tasks", "/photos", "/zones"];
+const TASK_ID_MAP_STORAGE_KEY = "offline-task-id-map-v1";
 
 const toRequestError = (fallback: string, source?: unknown) =>
   source instanceof Error ? source : new Error(fallback);
@@ -120,6 +132,116 @@ const createIdempotencyKey = () => {
 const isNetworkError = (value: unknown) => {
   if (!(value instanceof Error)) return false;
   return /network|failed to fetch|load failed/i.test(value.message) || value.name === "TypeError";
+};
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+const isOfflineTaskId = (value: string) => value.startsWith("offline-");
+
+const readTaskIdMap = (): OfflineTaskIdMap => {
+  if (!process.client) return {};
+  try {
+    const raw = localStorage.getItem(TASK_ID_MAP_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as OfflineTaskIdMap;
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
+const writeTaskIdMap = (value: OfflineTaskIdMap) => {
+  if (!process.client) return;
+  try {
+    localStorage.setItem(TASK_ID_MAP_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Ignore localStorage errors
+  }
+};
+
+const remapQueueItemTaskReferences = (
+  item: OfflineQueueItem,
+  taskIdMap: OfflineTaskIdMap
+): { item: OfflineQueueItem; unresolvedTaskId?: string } => {
+  let nextItem = item;
+  let unresolvedTaskId: string | undefined;
+
+  const mapTaskId = (value: string) => {
+    if (!isOfflineTaskId(value)) return value;
+    const mapped = taskIdMap[value];
+    if (mapped) return mapped;
+    unresolvedTaskId = unresolvedTaskId || value;
+    return value;
+  };
+
+  const taskPathMatch = nextItem.path.match(/^\/tasks\/([^/?#]+)(.*)$/);
+  if (taskPathMatch) {
+    const currentTaskId = taskPathMatch[1];
+    const mappedTaskId = mapTaskId(currentTaskId);
+    if (mappedTaskId !== currentTaskId) {
+      nextItem = {
+        ...nextItem,
+        path: `/tasks/${mappedTaskId}${taskPathMatch[2] || ""}`
+      };
+    }
+  }
+
+  if (nextItem.bodyType === "json" && isPlainObject(nextItem.jsonBody)) {
+    const jsonBody = { ...nextItem.jsonBody };
+    let bodyChanged = false;
+
+    if (typeof jsonBody.taskId === "string") {
+      const mappedTaskId = mapTaskId(jsonBody.taskId);
+      if (mappedTaskId !== jsonBody.taskId) {
+        jsonBody.taskId = mappedTaskId;
+        bodyChanged = true;
+      }
+    }
+
+    if (nextItem.path === "/tasks" && typeof jsonBody.id === "string") {
+      const mappedTaskId = mapTaskId(jsonBody.id);
+      if (mappedTaskId !== jsonBody.id) {
+        jsonBody.id = mappedTaskId;
+        bodyChanged = true;
+      }
+    }
+
+    if (bodyChanged) {
+      nextItem = {
+        ...nextItem,
+        jsonBody
+      };
+    }
+  }
+
+  if (nextItem.bodyType === "form-data" && nextItem.formEntries?.length) {
+    let formChanged = false;
+    const mappedEntries = nextItem.formEntries.map((entry) => {
+      if (entry.kind !== "text" || entry.key !== "taskId") {
+        return entry;
+      }
+      const mappedTaskId = mapTaskId(entry.value);
+      if (mappedTaskId === entry.value) {
+        return entry;
+      }
+      formChanged = true;
+      return {
+        ...entry,
+        value: mappedTaskId
+      };
+    });
+
+    if (formChanged) {
+      nextItem = {
+        ...nextItem,
+        formEntries: mappedEntries
+      };
+    }
+  }
+
+  return { item: nextItem, unresolvedTaskId };
 };
 
 const runWithStore = async <T>(
@@ -237,7 +359,7 @@ export const useOfflineSync = () => {
     };
   };
 
-  const syncItem = async (item: OfflineQueueItem) => {
+  const syncItem = async (item: OfflineQueueItem): Promise<SyncItemResult> => {
     const headers: Record<string, string> = {
       "X-Idempotency-Key": item.idempotencyKey
     };
@@ -259,18 +381,40 @@ export const useOfflineSync = () => {
     }
 
     const response = await fetch(`${config.public.apiBase}${item.path}`, options);
-    let payload: ApiFailure | null = null;
+    let payload: ApiFailure | ApiSuccess | null = null;
     try {
-      payload = (await response.json()) as ApiFailure;
+      payload = (await response.json()) as ApiFailure | ApiSuccess;
     } catch {
       payload = null;
     }
 
     if (!response.ok || payload?.success === false) {
-      const errorMessage =
-        payload?.error?.message || `Dong bo that bai (${response.status})`;
+      const apiErrorMessage =
+        payload && payload.success === false ? payload.error?.message : undefined;
+      const errorMessage = apiErrorMessage || `Dong bo that bai (${response.status})`;
       throw new Error(errorMessage);
     }
+
+    const isTaskCreateRequest =
+      item.path === "/tasks" &&
+      item.method === "POST" &&
+      item.bodyType === "json" &&
+      isPlainObject(item.jsonBody) &&
+      typeof item.jsonBody.id !== "string";
+
+    if (
+      isTaskCreateRequest &&
+      payload &&
+      payload.success === true &&
+      isPlainObject(payload.data)
+    ) {
+      const createdTaskId = payload.data._id ?? payload.data.id;
+      if (typeof createdTaskId === "string") {
+        return { createdTaskId };
+      }
+    }
+
+    return {};
   };
 
   const syncNow = async () => {
@@ -279,12 +423,23 @@ export const useOfflineSync = () => {
     lastSyncError.value = "";
 
     let syncedItems = 0;
+    const taskIdMap = readTaskIdMap();
     try {
       const items = await listQueueItems();
       for (const item of items) {
         if (!isOnline.value) break;
         try {
-          await syncItem(item);
+          const mapped = remapQueueItemTaskReferences(item, taskIdMap);
+          if (mapped.unresolvedTaskId) {
+            throw new Error("Task offline chua dong bo xong. Vui long cho dong bo tiep.");
+          }
+
+          const syncResult = await syncItem(mapped.item);
+          if (syncResult.createdTaskId) {
+            taskIdMap[`offline-${item.id}`] = syncResult.createdTaskId;
+            writeTaskIdMap(taskIdMap);
+          }
+
           await deleteQueueItem(item.id);
           syncedItems += 1;
         } catch (err) {

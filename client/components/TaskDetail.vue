@@ -195,6 +195,7 @@ import { useToast } from "~/composables/state/useToast";
 
 const props = defineProps<{
   taskId: string;
+  taskData?: Record<string, unknown> | null;
 }>();
 
 const emit = defineEmits<{
@@ -247,7 +248,24 @@ const addQueuedPhotoPreview = (file: File, queueId: string, photoName: string) =
   });
 };
 
+const applyTaskFallback = () => {
+  if (!props.taskData) return false;
+  task.value = { ...props.taskData };
+  revokeLocalPreviewUrls(photos.value);
+  photos.value = [];
+  error.value = "";
+  return true;
+};
+
 const loadTask = async () => {
+  if (props.taskId.startsWith("offline-")) {
+    loading.value = false;
+    if (!applyTaskFallback()) {
+      error.value = "Task offline chua san sang. Vui long doi dong bo.";
+    }
+    return;
+  }
+
   loading.value = true;
   error.value = "";
   try {
@@ -259,7 +277,15 @@ const loadTask = async () => {
     revokeLocalPreviewUrls(photos.value);
     photos.value = photosData || [];
   } catch (err) {
-    error.value = (err as Error).message;
+    const message = (err as Error).message || "";
+    const likelyOffline =
+      (process.client && !navigator.onLine) ||
+      /offline|network|failed to fetch|khong the tai/i.test(message);
+    if (likelyOffline && applyTaskFallback()) {
+      error.value = "";
+    } else {
+      error.value = message;
+    }
   } finally {
     loading.value = false;
   }

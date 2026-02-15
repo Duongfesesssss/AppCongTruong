@@ -378,6 +378,7 @@ const handleSubmit = async () => {
 
   try {
     let result: unknown;
+    let taskPayload: Record<string, unknown> | null = null;
 
     switch (props.type) {
       case "project":
@@ -422,7 +423,7 @@ const handleSubmit = async () => {
       }
 
       case "task":
-        result = await api.post("/tasks", {
+        taskPayload = {
           drawingId: props.parentId,
           pinName: form.pinName || undefined,
           roomName: form.roomName || undefined,
@@ -431,8 +432,16 @@ const handleSubmit = async () => {
           category: form.category,
           pinX: form.pinX,
           pinY: form.pinY
-        });
+        };
+        result = await api.post("/tasks", taskPayload);
         break;
+    }
+
+    if (props.type === "task" && taskPayload && isOfflineQueuedResponse(result)) {
+      result = {
+        ...(result as Record<string, unknown>),
+        __offlineTaskDraft: taskPayload
+      };
     }
 
     const queued = isOfflineQueuedResponse(result);

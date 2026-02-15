@@ -9,6 +9,13 @@ type ApiFailure = {
 };
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type CachedGetEntry<T> = {
+  cachedAt: number;
+  data: T;
+};
+
+const GET_CACHE_PREFIX = "api-get-cache-v1";
+const GET_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 export type ApiOfflineQueuedResult = {
   __offlineQueued: true;
@@ -73,6 +80,45 @@ export const useApi = () => {
 
   // Tranh goi refresh nhieu lan cung luc
   let refreshPromise: Promise<boolean> | null = null;
+
+  const getCacheUserScope = () => {
+    if (!process.client) return "server";
+    const currentUser = user.value as { id?: string } | null;
+    return currentUser?.id || "guest";
+  };
+
+  const getCacheKey = (path: string) => `${GET_CACHE_PREFIX}:${getCacheUserScope()}:${path}`;
+
+  const readCachedGet = <T>(path: string): T | null => {
+    if (!process.client) return null;
+    try {
+      const raw = localStorage.getItem(getCacheKey(path));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as CachedGetEntry<T>;
+      if (!parsed || typeof parsed !== "object") return null;
+      if (typeof parsed.cachedAt !== "number") return null;
+      if (Date.now() - parsed.cachedAt > GET_CACHE_TTL_MS) {
+        localStorage.removeItem(getCacheKey(path));
+        return null;
+      }
+      return parsed.data ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeCachedGet = <T>(path: string, data: T) => {
+    if (!process.client) return;
+    try {
+      const payload: CachedGetEntry<T> = {
+        cachedAt: Date.now(),
+        data
+      };
+      localStorage.setItem(getCacheKey(path), JSON.stringify(payload));
+    } catch {
+      // Ignore cache write errors (quota/private mode)
+    }
+  };
 
   const tryRefreshToken = async (): Promise<boolean> => {
     try {
@@ -156,7 +202,11 @@ export const useApi = () => {
     const idempotencyKey = canQueue ? createRequestId() : "";
 
     if (process.client && method === "GET" && offlineSync && !offlineSync.isOnline.value) {
-      throw new Error("Ban dang offline. Khong the tai du lieu moi.");
+      const cached = readCachedGet<T>(path);
+      if (cached !== null) {
+        return cached;
+      }
+      throw new Error("Ban dang offline va chua co du lieu da luu tren may.");
     }
 
     if (canQueue && offlineSync && !offlineSync.isOnline.value) {
@@ -245,8 +295,24 @@ export const useApi = () => {
         throw new Error(message);
       }
 
-      return (payload as ApiSuccess<T>).data;
+      const responseData = (payload as ApiSuccess<T>).data;
+      if (method === "GET") {
+        writeCachedGet(path, responseData);
+      }
+
+      return responseData;
     } catch (err) {
+      if (
+        method === "GET" &&
+        process.client &&
+        ((offlineSync && offlineSync.isNetworkError(err)) || (!offlineSync && err instanceof Error))
+      ) {
+        const cached = readCachedGet<T>(path);
+        if (cached !== null) {
+          return cached;
+        }
+      }
+
       if (canQueue && offlineSync && offlineSync.isNetworkError(err)) {
         return queueRequest<T>(
           method as Exclude<HttpMethod, "GET">,

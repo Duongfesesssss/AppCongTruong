@@ -126,7 +126,11 @@
 
         <!-- Task Detail (hiển thị bên cạnh khi chọn task) -->
         <section v-if="selectedTask" class="min-w-0">
-          <TaskDetail :task-id="selectedTask._id" @updated="reloadDrawingData" />
+          <TaskDetail
+            :task-id="selectedTask._id || selectedTask.id"
+            :task-data="selectedTask"
+            @updated="reloadDrawingData"
+          />
         </section>
       </div>
     </template>
@@ -164,7 +168,11 @@
 
 <script setup lang="ts">
 import { useSelectedNode, type SelectedNode } from "~/composables/state/useSelectedNode";
-import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
+import {
+  isOfflineQueuedResponse,
+  type ApiOfflineQueuedResult,
+  useApi
+} from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 
 const selected = useSelectedNode();
@@ -186,6 +194,21 @@ const error = ref("");
 const placingPin = ref(false);
 const pendingPinCoords = ref<{ pinX: number; pinY: number } | null>(null);
 const showTaskCreator = ref(false);
+
+type OfflineTaskDraft = {
+  drawingId?: string;
+  pinName?: string;
+  roomName?: string;
+  description?: string;
+  status?: string;
+  category?: string;
+  pinX?: number;
+  pinY?: number;
+};
+
+type OfflineTaskCreatedPayload = ApiOfflineQueuedResult & {
+  __offlineTaskDraft?: OfflineTaskDraft;
+};
 
 // Load drawing data khi chọn drawing
 const loadDrawingData = async (node: SelectedNode | null) => {
@@ -323,11 +346,37 @@ const closeTaskCreator = () => {
 };
 
 const handleTaskCreated = async (createdData: unknown) => {
+  const fallbackPinX = pendingPinCoords.value?.pinX ?? 0.5;
+  const fallbackPinY = pendingPinCoords.value?.pinY ?? 0.5;
   showTaskCreator.value = false;
   pendingPinCoords.value = null;
   placingPin.value = false;
   if (isOfflineQueuedResponse(createdData)) {
-    toast.push("Task da luu tam. He thong se tu dong bo khi co mang.", "info");
+    const queuedPayload = createdData as OfflineTaskCreatedPayload;
+    const draft = queuedPayload.__offlineTaskDraft;
+    if (draft && selected.value?.type === "drawing") {
+      const offlineTaskId = `offline-${queuedPayload.queueId}`;
+      const alreadyExists = pins.value.some((pin) => (pin._id || pin.id) === offlineTaskId);
+      if (!alreadyExists) {
+        const offlineTask = {
+          _id: offlineTaskId,
+          drawingId: draft.drawingId || selected.value.id,
+          pinName: draft.pinName || "",
+          roomName: draft.roomName || "",
+          description: draft.description || "",
+          status: draft.status || "open",
+          category: draft.category || "quality",
+          pinX: typeof draft.pinX === "number" ? draft.pinX : fallbackPinX,
+          pinY: typeof draft.pinY === "number" ? draft.pinY : fallbackPinY,
+          pinCode: `CHO-DONG-BO-${queuedPayload.queueId.slice(-4).toUpperCase()}`,
+          photoCount: 0,
+          _offlineQueued: true
+        };
+        pins.value = [offlineTask, ...pins.value];
+        selectedTask.value = offlineTask;
+      }
+    }
+    toast.push("Task da luu tam va mo duoc de lam viec offline. He thong se dong bo khi co mang.", "info");
     return;
   }
   await reloadTasksOnly();
