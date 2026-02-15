@@ -162,6 +162,8 @@
       :show="!!annotatingPhoto && !!annotatingPhoto._id"
       :photo-url="annotatingPhotoUrl"
       :photo-id="annotatingPhoto?._id || ''"
+      :photo-width="annotatingPhoto?.width"
+      :photo-height="annotatingPhoto?.height"
       :initial-annotations="annotatingPhoto?.annotations || []"
       @close="closeAnnotator"
       @saved="handleAnnotationSaved"

@@ -176,6 +176,7 @@
               @pointerdown="handlePointerDown"
               @pointermove="handlePointerMove"
               @pointerup="handlePointerUp"
+              @pointercancel="handlePointerUp"
               @wheel.prevent="handleWheel"
             ></canvas>
 
@@ -212,7 +213,7 @@
             <div v-if="lines.length === 0" class="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div class="rounded-lg bg-black/60 px-4 py-3 text-center text-sm text-white backdrop-blur-sm">
                 <p class="font-medium">Chạm và kéo để vẽ đường đo</p>
-                <p class="mt-1 text-xs opacity-75">Cuộn chuột để zoom • Khoảng cách hiển thị tự động</p>
+                <p class="mt-1 text-xs opacity-75">Dùng 2 ngón để pinch zoom • Khoảng cách hiển thị tự động</p>
               </div>
             </div>
           </div>
@@ -281,6 +282,8 @@ const props = defineProps<{
   show: boolean;
   photoUrl: string;
   photoId: string;
+  photoWidth?: number;
+  photoHeight?: number;
   initialAnnotations?: Line[];
 }>();
 
@@ -302,10 +305,21 @@ const lines = ref<Line[]>([]);
 const selectedLine = ref<number | null>(null);
 
 // Pan/zoom state
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 5;
 const panOffset = ref({ x: 0, y: 0 });
 const isPanning = ref(false);
 const panStart = ref<{ x: number; y: number } | null>(null);
 const zoomLevel = ref(1);
+
+type PinchState = {
+  startDistance: number;
+  startZoom: number;
+  anchorWorld: { x: number; y: number };
+};
+
+const activeTouchPointers = new Map<number, { x: number; y: number }>();
+let pinchState: PinchState | null = null;
 
 // Drawing state
 const drawing = ref(false);
@@ -412,46 +426,114 @@ const getDisplaySize = () => {
   return { w, h };
 };
 
+const clampInRange = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const clampUnit = (value: number) => clampInRange(value, 0, 1);
+
+const toFiniteNumber = (value: unknown, fallback = 0) => {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const lineLength = (x1: number, y1: number, x2: number, y2: number) => {
+  return Math.hypot(x2 - x1, y2 - y1);
+};
+
+const isUnitValue = (value: number) => value >= 0 && value <= 1;
+
+const isNormalizedLine = (line: Line) => {
+  const x1 = toFiniteNumber(line.x1);
+  const y1 = toFiniteNumber(line.y1);
+  const x2 = toFiniteNumber(line.x2);
+  const y2 = toFiniteNumber(line.y2);
+  return isUnitValue(x1) && isUnitValue(y1) && isUnitValue(x2) && isUnitValue(y2);
+};
+
+const resolveLegacyBasis = () => {
+  const imageWidth = toFiniteNumber(props.photoWidth ?? image.value?.naturalWidth, 0);
+  const imageHeight = toFiniteNumber(props.photoHeight ?? image.value?.naturalHeight, 0);
+  if (imageWidth > 1 && imageHeight > 1) {
+    return { w: imageWidth, h: imageHeight };
+  }
+  const current = getDisplaySize();
+  return {
+    w: Math.max(current.w, 1),
+    h: Math.max(current.h, 1)
+  };
+};
+
+const toNormalizedLine = (line: Line): Line => {
+  const rawX1 = toFiniteNumber(line.x1);
+  const rawY1 = toFiniteNumber(line.y1);
+  const rawX2 = toFiniteNumber(line.x2);
+  const rawY2 = toFiniteNumber(line.y2);
+
+  let x1 = rawX1;
+  let y1 = rawY1;
+  let x2 = rawX2;
+  let y2 = rawY2;
+
+  if (isNormalizedLine({ ...line, x1: rawX1, y1: rawY1, x2: rawX2, y2: rawY2 })) {
+    x1 = clampUnit(rawX1);
+    y1 = clampUnit(rawY1);
+    x2 = clampUnit(rawX2);
+    y2 = clampUnit(rawY2);
+  } else {
+    const basis = resolveLegacyBasis();
+    x1 = clampUnit(rawX1 / basis.w);
+    y1 = clampUnit(rawY1 / basis.h);
+    x2 = clampUnit(rawX2 / basis.w);
+    y2 = clampUnit(rawY2 / basis.h);
+  }
+
+  return {
+    ...line,
+    x1,
+    y1,
+    x2,
+    y2,
+    distance: lineLength(x1, y1, x2, y2)
+  };
+};
+
 // Normalize pixel coords → 0-1 range (để lưu trữ)
 const normalizeLines = (pixelLines: Line[]): Line[] => {
   const { w, h } = getDisplaySize();
-  return pixelLines.map(line => ({
-    ...line,
-    x1: line.x1 / w,
-    y1: line.y1 / h,
-    x2: line.x2 / w,
-    y2: line.y2 / h,
-    distance: Math.sqrt(
-      Math.pow((line.x2 / w) - (line.x1 / w), 2) +
-      Math.pow((line.y2 / h) - (line.y1 / h), 2)
-    )
-  }));
+  const safeW = Math.max(w, 1);
+  const safeH = Math.max(h, 1);
+  return pixelLines.map((line) => {
+    const x1 = clampUnit(toFiniteNumber(line.x1) / safeW);
+    const y1 = clampUnit(toFiniteNumber(line.y1) / safeH);
+    const x2 = clampUnit(toFiniteNumber(line.x2) / safeW);
+    const y2 = clampUnit(toFiniteNumber(line.y2) / safeH);
+    return {
+      ...line,
+      x1,
+      y1,
+      x2,
+      y2,
+      distance: lineLength(x1, y1, x2, y2)
+    };
+  });
 };
 
 // Denormalize 0-1 coords → pixel coords (để hiển thị)
-const denormalizeLines = (storedLines: Line[]): Line[] => {
+const denormalizeLines = (normalizedLines: Line[]): Line[] => {
   const { w, h } = getDisplaySize();
-  return storedLines.map(line => {
-    // Detect: nếu tất cả coords nằm trong [0, 1] → normalized
-    const isNorm = line.x1 >= 0 && line.x1 <= 1 &&
-                   line.y1 >= 0 && line.y1 <= 1 &&
-                   line.x2 >= 0 && line.x2 <= 1 &&
-                   line.y2 >= 0 && line.y2 <= 1;
-
-    if (!isNorm) return line; // Dữ liệu cũ pixel, giữ nguyên
-
-    const denorm = {
+  const safeW = Math.max(w, 1);
+  const safeH = Math.max(h, 1);
+  return normalizedLines.map((line) => {
+    const x1 = clampInRange(toFiniteNumber(line.x1) * safeW, 0, safeW);
+    const y1 = clampInRange(toFiniteNumber(line.y1) * safeH, 0, safeH);
+    const x2 = clampInRange(toFiniteNumber(line.x2) * safeW, 0, safeW);
+    const y2 = clampInRange(toFiniteNumber(line.y2) * safeH, 0, safeH);
+    return {
       ...line,
-      x1: line.x1 * w,
-      y1: line.y1 * h,
-      x2: line.x2 * w,
-      y2: line.y2 * h,
+      x1,
+      y1,
+      x2,
+      y2,
+      distance: lineLength(x1, y1, x2, y2)
     };
-    denorm.distance = Math.sqrt(
-      Math.pow(denorm.x2 - denorm.x1, 2) +
-      Math.pow(denorm.y2 - denorm.y1, 2)
-    );
-    return denorm;
   });
 };
 
@@ -459,23 +541,11 @@ const denormalizeLines = (storedLines: Line[]): Line[] => {
 const migrateLine = (line: Line): Line => {
   const migrated = { ...line };
 
-  // Ensure distance is calculated
-  if (!migrated.distance) {
-    migrated.distance = Math.sqrt(
-      Math.pow(migrated.x2 - migrated.x1, 2) + Math.pow(migrated.y2 - migrated.y1, 2)
-    );
-  }
-
   // Parse realDistance to get realValue + unit if not already present
   if (migrated.realDistance && !migrated.realValue) {
     const { value, unit } = parseDistance(migrated.realDistance);
     migrated.realValue = value;
     migrated.unit = unit;
-  }
-
-  // Calculate scale if we have both values
-  if (migrated.realValue && migrated.distance > 0 && !migrated.scale) {
-    migrated.scale = migrated.realValue / migrated.distance;
   }
 
   // Add timestamp if missing (use current time as fallback)
@@ -504,14 +574,14 @@ const loadImage = () => {
     const draft = loadDraft(cachedPhotoId.value);
     if (draft && draft.length > 0) {
       // Có draft chưa lưu → recover
-      const migrated = draft.map(migrateLine);
-      lines.value = denormalizeLines(migrated);
+      const normalized = draft.map(migrateLine).map(toNormalizedLine);
+      lines.value = denormalizeLines(normalized);
       toast.push("Đã khôi phục bản nháp chưa lưu", "success");
       console.log("Recovered draft annotations:", lines.value);
     } else if (props.initialAnnotations && props.initialAnnotations.length > 0) {
       // Migrate → denormalize (0-1 → pixel) cho display hiện tại
-      const migrated = props.initialAnnotations.map(migrateLine);
-      lines.value = denormalizeLines(migrated);
+      const normalized = props.initialAnnotations.map(migrateLine).map(toNormalizedLine);
+      lines.value = denormalizeLines(normalized);
       console.log("Loaded, migrated and denormalized annotations:", lines.value);
     } else {
       console.log("No initial annotations to load");
@@ -571,41 +641,64 @@ const resizeCanvas = () => {
   }
 };
 
+const getDisplayPointFromClient = (clientX: number, clientY: number) => {
+  const canvas = canvasRef.value;
+  if (!canvas) return null;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return null;
+  const displayWidth = parseFloat(canvas.style.width) || canvas.width;
+  const displayHeight = parseFloat(canvas.style.height) || canvas.height;
+  const x = ((clientX - rect.left) / rect.width) * displayWidth;
+  const y = ((clientY - rect.top) / rect.height) * displayHeight;
+  return { x, y, displayWidth, displayHeight };
+};
+
+const clampZoom = (value: number) => clampInRange(value, MIN_ZOOM, MAX_ZOOM);
+
+const applyZoomAt = (targetZoom: number, anchorClient?: { x: number; y: number }) => {
+  const nextZoom = clampZoom(targetZoom);
+  const prevZoom = zoomLevel.value;
+  if (prevZoom === nextZoom) return;
+
+  const anchor = anchorClient
+    ? getDisplayPointFromClient(anchorClient.x, anchorClient.y)
+    : null;
+
+  if (!anchor) {
+    zoomLevel.value = nextZoom;
+    draw();
+    return;
+  }
+
+  const worldX = (anchor.x - panOffset.value.x) / prevZoom;
+  const worldY = (anchor.y - panOffset.value.y) / prevZoom;
+
+  zoomLevel.value = nextZoom;
+  panOffset.value.x = anchor.x - worldX * nextZoom;
+  panOffset.value.y = anchor.y - worldY * nextZoom;
+  draw();
+};
+
 // === Zoom controls ===
-const zoomIn = () => { zoomLevel.value = Math.min(zoomLevel.value * 1.25, 5); draw(); };
-const zoomOut = () => { zoomLevel.value = Math.max(zoomLevel.value / 1.25, 0.3); draw(); };
-const resetView = () => { zoomLevel.value = 1; panOffset.value = { x: 0, y: 0 }; draw(); };
+const zoomIn = () => applyZoomAt(zoomLevel.value * 1.25);
+const zoomOut = () => applyZoomAt(zoomLevel.value / 1.25);
+const resetView = () => {
+  zoomLevel.value = 1;
+  panOffset.value = { x: 0, y: 0 };
+  draw();
+};
 
 const handleWheel = (e: WheelEvent) => {
   e.preventDefault();
   const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-  zoomLevel.value = Math.min(Math.max(zoomLevel.value * factor, 0.3), 5);
-  draw();
+  applyZoomAt(zoomLevel.value * factor, { x: e.clientX, y: e.clientY });
 };
 
-// Handle resize: scale tọa độ từ old size → new size
+// Handle resize: lưu tạm về normalized rồi dựng lại theo canvas mới để tránh drift giữa thiết bị.
 const handleResize = () => {
-  const oldSize = getDisplaySize();
+  const normalized = normalizeLines(lines.value);
   resizeCanvas();
-  const newSize = getDisplaySize();
-
-  if (oldSize.w > 1 && oldSize.h > 1 && lines.value.length > 0) {
-    const scaleX = newSize.w / oldSize.w;
-    const scaleY = newSize.h / oldSize.h;
-    lines.value = lines.value.map(line => {
-      const scaled = {
-        ...line,
-        x1: line.x1 * scaleX,
-        y1: line.y1 * scaleY,
-        x2: line.x2 * scaleX,
-        y2: line.y2 * scaleY,
-      };
-      scaled.distance = Math.sqrt(
-        Math.pow(scaled.x2 - scaled.x1, 2) + Math.pow(scaled.y2 - scaled.y1, 2)
-      );
-      return scaled;
-    });
-  }
+  lines.value = denormalizeLines(normalized);
   draw();
 };
 
@@ -763,19 +856,81 @@ const calculateDistance = (p1: { x: number; y: number }, p2: { x: number; y: num
 };
 
 const getCanvasCoords = (e: PointerEvent) => {
-  const canvas = canvasRef.value;
-  if (!canvas) return null;
+  const displayPoint = getDisplayPointFromClient(e.clientX, e.clientY);
+  if (!displayPoint) return null;
+  const xRaw = (displayPoint.x - panOffset.value.x) / zoomLevel.value;
+  const yRaw = (displayPoint.y - panOffset.value.y) / zoomLevel.value;
+  return {
+    x: clampInRange(xRaw, 0, displayPoint.displayWidth),
+    y: clampInRange(yRaw, 0, displayPoint.displayHeight)
+  };
+};
 
-  const rect = canvas.getBoundingClientRect();
-  // Get display size (CSS size)
-  const displayWidth = parseFloat(canvas.style.width) || canvas.width;
-  const displayHeight = parseFloat(canvas.style.height) || canvas.height;
+const getActiveTouchPair = () => {
+  const points = Array.from(activeTouchPointers.values());
+  if (points.length < 2) return null;
+  return [points[0], points[1]] as const;
+};
 
-  // Calculate coords accounting for pan + zoom
-  const x = (((e.clientX - rect.left) / rect.width) * displayWidth - panOffset.value.x) / zoomLevel.value;
-  const y = (((e.clientY - rect.top) / rect.height) * displayHeight - panOffset.value.y) / zoomLevel.value;
+const touchDistance = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+};
 
-  return { x, y };
+const touchMidpoint = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2
+  };
+};
+
+const beginPinch = () => {
+  const pair = getActiveTouchPair();
+  if (!pair) return;
+  const [first, second] = pair;
+  const startDistance = touchDistance(first, second);
+  if (startDistance < 4) return;
+
+  const midpoint = touchMidpoint(first, second);
+  const anchor = getDisplayPointFromClient(midpoint.x, midpoint.y);
+  if (!anchor) return;
+
+  pinchState = {
+    startDistance,
+    startZoom: zoomLevel.value,
+    anchorWorld: {
+      x: (anchor.x - panOffset.value.x) / zoomLevel.value,
+      y: (anchor.y - panOffset.value.y) / zoomLevel.value
+    }
+  };
+
+  // Hủy trạng thái tương tác 1 ngón để tránh tạo line rác khi chuyển sang pinch.
+  drawing.value = false;
+  dragging.value = false;
+  draggingEndpoint.value = null;
+  isPanning.value = false;
+  panStart.value = null;
+  startPoint.value = null;
+  currentPoint.value = null;
+  dragStart.value = null;
+};
+
+const updatePinch = () => {
+  if (!pinchState) return;
+  const pair = getActiveTouchPair();
+  if (!pair) return;
+  const [first, second] = pair;
+  const nextDistance = touchDistance(first, second);
+  if (nextDistance <= 0) return;
+
+  const nextZoom = clampZoom(pinchState.startZoom * (nextDistance / pinchState.startDistance));
+  const midpoint = touchMidpoint(first, second);
+  const anchor = getDisplayPointFromClient(midpoint.x, midpoint.y);
+  if (!anchor) return;
+
+  zoomLevel.value = nextZoom;
+  panOffset.value.x = anchor.x - pinchState.anchorWorld.x * nextZoom;
+  panOffset.value.y = anchor.y - pinchState.anchorWorld.y * nextZoom;
+  draw();
 };
 
 const findLineAt = (point: { x: number; y: number }) => {
@@ -849,6 +1004,22 @@ const handlePointerDown = (e: PointerEvent) => {
   const canvas = canvasRef.value;
   if (!canvas) return;
 
+  if (e.pointerType === "touch") {
+    activeTouchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+    if (activeTouchPointers.size >= 2) {
+      beginPinch();
+      e.preventDefault();
+      return;
+    }
+  }
+
+  if (pinchState) return;
+
   if (mode.value === "pan") {
     // For pan mode, we need screen coordinates, not canvas coordinates
     isPanning.value = true;
@@ -888,6 +1059,20 @@ const handlePointerDown = (e: PointerEvent) => {
 };
 
 const handlePointerMove = (e: PointerEvent) => {
+  if (e.pointerType === "touch" && activeTouchPointers.has(e.pointerId)) {
+    activeTouchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinchState || activeTouchPointers.size >= 2) {
+      if (!pinchState) {
+        beginPinch();
+      }
+      updatePinch();
+      e.preventDefault();
+      return;
+    }
+  }
+
+  if (pinchState) return;
+
   if (mode.value === "pan" && isPanning.value && panStart.value) {
     // Pan the image
     const dx = e.clientX - panStart.value.x;
@@ -935,12 +1120,13 @@ const handlePointerMove = (e: PointerEvent) => {
     else if (dragging.value && selectedLine.value !== null && dragStart.value) {
       const dx = coords.x - dragStart.value.x;
       const dy = coords.y - dragStart.value.y;
+      const { w, h } = getDisplaySize();
 
       const line = lines.value[selectedLine.value];
-      line.x1 += dx;
-      line.y1 += dy;
-      line.x2 += dx;
-      line.y2 += dy;
+      line.x1 = clampInRange(line.x1 + dx, 0, w);
+      line.y1 = clampInRange(line.y1 + dy, 0, h);
+      line.x2 = clampInRange(line.x2 + dx, 0, w);
+      line.y2 = clampInRange(line.y2 + dy, 0, h);
 
       dragStart.value = coords;
       draw();
@@ -948,8 +1134,27 @@ const handlePointerMove = (e: PointerEvent) => {
   }
 };
 
-const handlePointerUp = () => {
+const handlePointerUp = (e: PointerEvent) => {
   const canvas = canvasRef.value;
+
+  if (e.pointerType === "touch") {
+    activeTouchPointers.delete(e.pointerId);
+    if (canvas?.hasPointerCapture?.(e.pointerId)) {
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    }
+    if (pinchState) {
+      if (activeTouchPointers.size >= 2) {
+        updatePinch();
+      } else {
+        pinchState = null;
+      }
+      return;
+    }
+  }
 
   if (mode.value === "pan" && isPanning.value) {
     isPanning.value = false;
@@ -1152,8 +1357,8 @@ const handleImportExcel = async (event: Event) => {
 
     // Reload annotations from response - denormalize 0-1 → pixel
     if (response.photo && response.photo.annotations) {
-      const migrated = (response.photo.annotations as Line[]).map(migrateLine);
-      lines.value = denormalizeLines(migrated);
+      const normalized = (response.photo.annotations as Line[]).map(migrateLine).map(toNormalizedLine);
+      lines.value = denormalizeLines(normalized);
       draw();
       toast.push(`Đã import ${response.imported} đường đo`, "success");
       emit("saved");
@@ -1253,6 +1458,8 @@ watch(() => props.show, (newVal, oldVal) => {
     zoomLevel.value = 1;
     isPanning.value = false;
     panStart.value = null;
+    activeTouchPointers.clear();
+    pinchState = null;
 
     // Chỉ load khi mở modal (từ false → true)
     nextTick(() => {
@@ -1264,6 +1471,8 @@ watch(() => props.show, (newVal, oldVal) => {
     // Khi đóng modal (từ true → false)
     stopAutosave();
     window.removeEventListener("resize", handleResize);
+    activeTouchPointers.clear();
+    pinchState = null;
     // Auto-save nếu có lines và có photoId
     if (lines.value.length > 0 && cachedPhotoId.value) {
       const photoIdToSave = cachedPhotoId.value;
