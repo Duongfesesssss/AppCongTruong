@@ -111,8 +111,8 @@
               :src="getPhotoUrl(photo)"
               :alt="photo.storageKey"
               class="h-full w-full object-cover transition-transform"
-              :class="photo._offlineQueued ? 'cursor-not-allowed opacity-80' : 'cursor-pointer group-hover:scale-105'"
-              @click="!photo._offlineQueued && openAnnotator(photo)"
+              :class="photo._offlineQueued ? 'cursor-pointer opacity-90 group-hover:scale-105' : 'cursor-pointer group-hover:scale-105'"
+              @click="openAnnotator(photo)"
             />
             <!-- Delete button (top-left) -->
             <button
@@ -127,7 +127,7 @@
             </button>
             <!-- Badge nếu đã có annotations (top-right) -->
             <div
-              v-if="!photo._offlineQueued && photo.annotations?.length"
+              v-if="photo.annotations?.length"
               class="absolute right-1 top-1 z-10 flex items-center gap-0.5 rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow"
             >
               <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -144,8 +144,8 @@
             </div>
             <div
               class="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors"
-              :class="photo._offlineQueued ? '' : 'cursor-pointer group-hover:bg-black/30'"
-              @click="!photo._offlineQueued && openAnnotator(photo)"
+              :class="'cursor-pointer group-hover:bg-black/30'"
+              @click="openAnnotator(photo)"
             >
               <svg class="h-8 w-8 text-white opacity-0 transition-opacity group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -191,6 +191,7 @@
 
 <script setup lang="ts">
 import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
+import { useOfflineSync } from "~/composables/state/useOfflineSync";
 import { useToast } from "~/composables/state/useToast";
 
 const props = defineProps<{
@@ -203,6 +204,7 @@ const emit = defineEmits<{
 }>();
 
 const api = useApi();
+const offlineSync = useOfflineSync();
 const toast = useToast();
 const config = useRuntimeConfig();
 const token = useState<string | null>("auth-token", () => null);
@@ -427,10 +429,6 @@ const exportExcel = async () => {
 };
 
 const openAnnotator = (photo: any) => {
-  if (photo?._offlineQueued) {
-    toast.push("Anh dang cho dong bo. Vui long thu lai sau.", "info");
-    return;
-  }
   console.log("openAnnotator called", {
     photoId: photo._id,
     annotations: photo.annotations
@@ -526,4 +524,14 @@ onUnmounted(() => {
 
 // Load on mount and when taskId changes
 watch(() => props.taskId, loadTask, { immediate: true });
+
+watch(
+  () => offlineSync.lastSuccessfulSyncAt.value,
+  async (value, previousValue) => {
+    if (!value || value === previousValue) return;
+    if (props.taskId.startsWith("offline-")) return;
+    if (process.client && !navigator.onLine) return;
+    await loadTask();
+  }
+);
 </script>

@@ -593,7 +593,14 @@ const loadImage = () => {
     toast.push("Không thể tải ảnh", "error");
   };
   // Thêm timestamp để tránh cache
-  const urlWithTimestamp = props.photoUrl.includes('?')
+  const isLocalPreviewUrl =
+    props.photoUrl.startsWith("blob:") || props.photoUrl.startsWith("data:");
+  if (isLocalPreviewUrl) {
+    img.src = props.photoUrl;
+    return;
+  }
+
+  const urlWithTimestamp = props.photoUrl.includes("?")
     ? `${props.photoUrl}&t=${Date.now()}`
     : `${props.photoUrl}?t=${Date.now()}`;
   img.src = urlWithTimestamp;

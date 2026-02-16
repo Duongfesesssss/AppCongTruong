@@ -173,10 +173,12 @@ import {
   type ApiOfflineQueuedResult,
   useApi
 } from "~/composables/api/useApi";
+import { useOfflineSync } from "~/composables/state/useOfflineSync";
 import { useToast } from "~/composables/state/useToast";
 
 const selected = useSelectedNode();
 const api = useApi();
+const offlineSync = useOfflineSync();
 const toast = useToast();
 const config = useRuntimeConfig();
 const token = useState<string | null>("auth-token", () => null);
@@ -210,6 +212,43 @@ type OfflineTaskCreatedPayload = ApiOfflineQueuedResult & {
   __offlineTaskDraft?: OfflineTaskDraft;
 };
 
+const OFFLINE_TASK_ID_MAP_STORAGE_KEY = "offline-task-id-map-v1";
+
+const readOfflineTaskIdMap = (): Record<string, string> => {
+  if (!process.client) return {};
+  try {
+    const raw = localStorage.getItem(OFFLINE_TASK_ID_MAP_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
+const syncSelectedTaskWithPins = (nextPins: any[]) => {
+  if (!selectedTask.value) return;
+
+  const selectedTaskId = selectedTask.value._id || selectedTask.value.id;
+  if (typeof selectedTaskId !== "string") {
+    selectedTask.value = null;
+    return;
+  }
+
+  let mappedTaskId: string | undefined;
+  if (selectedTaskId.startsWith("offline-")) {
+    mappedTaskId = readOfflineTaskIdMap()[selectedTaskId];
+  }
+
+  const matchedTask = nextPins.find((pin) => {
+    const currentPinId = pin?._id || pin?.id;
+    return currentPinId === selectedTaskId || (mappedTaskId && currentPinId === mappedTaskId);
+  });
+
+  selectedTask.value = matchedTask || null;
+};
+
 // Load drawing data khi chọn drawing
 const loadDrawingData = async (node: SelectedNode | null) => {
   if (!node || node.type !== "drawing") {
@@ -230,6 +269,7 @@ const loadDrawingData = async (node: SelectedNode | null) => {
     drawing.value = drawingData;
     pins.value = tasksData || [];
     zones.value = zonesData || [];
+    syncSelectedTaskWithPins(pins.value);
   } catch (err) {
     error.value = (err as Error).message;
   } finally {
@@ -254,6 +294,7 @@ const reloadTasksOnly = async () => {
     ]);
     pins.value = tasksData || [];
     zones.value = zonesData || [];
+    syncSelectedTaskWithPins(pins.value);
   } catch {
     // Lỗi nhẹ, không cần hiển thị
   }
@@ -432,6 +473,15 @@ const reloadTask = async () => {
     await loadDrawingData(selected.value);
   }
 };
+
+watch(
+  () => offlineSync.lastSuccessfulSyncAt.value,
+  async (value, previousValue) => {
+    if (!value || value === previousValue) return;
+    if (selected.value?.type !== "drawing") return;
+    await reloadTasksOnly();
+  }
+);
 
 // Status helpers
 const statusColor = (status: string) => {
