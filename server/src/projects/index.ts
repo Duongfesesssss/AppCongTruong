@@ -4,11 +4,12 @@ import { type HydratedDocument, Types } from "mongoose";
 import { asyncHandler, sendSuccess } from "../lib/response";
 import { validate } from "../middlewares/validation";
 import { requireAuth } from "../middlewares/require-auth";
-import { sanitizeText, toCode } from "../lib/utils";
+import { sanitizeText } from "../lib/utils";
 import { errors } from "../lib/errors";
 import { UserModel } from "../users/user.model";
 import { ProjectModel, type ProjectDocument } from "./project.model";
 import { buildProjectAccessFilter, ensureProjectRole, getProjectRole } from "./project-access";
+import { buildUniqueProjectCode } from "./project-code";
 import {
   addProjectMemberSchema,
   createProjectSchema,
@@ -88,6 +89,16 @@ const getProjectMembersPayload = async (project: ProjectDocWithMethods) => {
   };
 };
 
+const listProjectCodesByUser = async (userId: string, excludeProjectId?: string) => {
+  const filter: Record<string, unknown> = { userId };
+  if (excludeProjectId) {
+    filter._id = { $ne: new Types.ObjectId(excludeProjectId) };
+  }
+
+  const projects = await ProjectModel.find(filter).select("code").lean();
+  return projects.map((project) => project.code);
+};
+
 router.post(
   "/",
   requireAuth,
@@ -104,6 +115,10 @@ router.post(
       .select("sortIndex")
       .lean();
     const nextSortIndex = (lastProject?.sortIndex ?? 0) + 1;
+    const projectCode = buildUniqueProjectCode(
+      { name, code },
+      await listProjectCodesByUser(req.user!.id)
+    );
 
     const project = await ProjectModel.create({
       userId: req.user!.id,
@@ -115,7 +130,7 @@ router.post(
         }
       ],
       name: sanitizeText(name),
-      code: toCode(code ?? name, 3),
+      code: projectCode,
       sortIndex: nextSortIndex,
       description: description ? sanitizeText(description) : undefined
     });
@@ -269,8 +284,13 @@ router.put(
     const project = (await ProjectModel.findById(req.params.id)) as ProjectDocWithMethods | null;
     ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
 
+    const projectCode = buildUniqueProjectCode(
+      { name, code },
+      await listProjectCodesByUser(req.user!.id, req.params.id)
+    );
+
     project!.name = sanitizeText(name);
-    project!.code = toCode(code ?? name, 3);
+    project!.code = projectCode;
     project!.description = description ? sanitizeText(description) : undefined;
     await project!.save();
 
@@ -289,8 +309,13 @@ router.patch(
     const project = (await ProjectModel.findById(req.params.id)) as ProjectDocWithMethods | null;
     ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
 
+    const projectCode = buildUniqueProjectCode(
+      { name },
+      await listProjectCodesByUser(req.user!.id, req.params.id)
+    );
+
     project!.name = sanitizeText(name);
-    project!.code = toCode(name, 3);
+    project!.code = projectCode;
     await project!.save();
 
     return sendSuccess(res, toProjectResponse(project as ProjectDocWithMethods, req.user!.id));

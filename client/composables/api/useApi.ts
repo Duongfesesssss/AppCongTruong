@@ -321,6 +321,14 @@ export const useApi = () => {
           idempotencyKey || createRequestId()
         );
       }
+
+      const isLikelyNetworkError = offlineSync
+        ? offlineSync.isNetworkError(err)
+        : err instanceof TypeError;
+      if (isLikelyNetworkError) {
+        throw new Error("Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.");
+      }
+
       const message = (err as Error).message || "Co loi xay ra";
       throw new Error(message);
     }
