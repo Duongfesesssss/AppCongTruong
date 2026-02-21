@@ -116,7 +116,7 @@
             />
             <!-- Delete button (top-left) -->
             <button
-              v-if="!photo._offlineQueued"
+              v-if="!photo._offlineQueued && canDeletePhoto"
               class="absolute left-1 top-1 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-rose-500 text-white shadow-lg hover:bg-rose-600 active:bg-rose-700"
               title="Xoá ảnh"
               @click.stop="handleDeletePhoto(photo)"
@@ -197,6 +197,7 @@ import { useToast } from "~/composables/state/useToast";
 const props = defineProps<{
   taskId: string;
   taskData?: Record<string, unknown> | null;
+  canDeletePhoto?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -450,6 +451,10 @@ const handleAnnotationSaved = async () => {
 };
 
 const handleDeletePhoto = (photo: any) => {
+  if (props.canDeletePhoto === false) {
+    toast.push("Tai khoan ky thuat vien khong co quyen xoa anh", "info");
+    return;
+  }
   if (photo?._offlineQueued) {
     toast.push("Anh dang cho dong bo, chua the xoa.", "info");
     return;

@@ -5,6 +5,7 @@ import { validate } from "../middlewares/validation";
 import { requireAuth } from "../middlewares/require-auth";
 import { errors } from "../lib/errors";
 import { ProjectModel } from "../projects/project.model";
+import { ensureProjectRole } from "../projects/project-access";
 import { BuildingModel } from "./building.model";
 import { createBuildingSchema, listBuildingSchema } from "./building.schema";
 import { sanitizeText, toCode } from "../lib/utils";
@@ -18,17 +19,17 @@ router.post(
   asyncHandler(async (req, res) => {
     const { projectId, name, code } = req.body as { projectId: string; name: string; code?: string };
 
-    const project = await ProjectModel.findOne({ _id: projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
+    const project = await ProjectModel.findById(projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Project không tồn tại hoặc không có quyền");
 
-    const lastBuilding = await BuildingModel.findOne({ projectId: project._id })
+    const lastBuilding = await BuildingModel.findOne({ projectId: project!._id })
       .sort({ sortIndex: -1, createdAt: -1 })
       .select("sortIndex")
       .lean();
     const nextSortIndex = (lastBuilding?.sortIndex ?? 0) + 1;
 
     const building = await BuildingModel.create({
-      projectId: project._id,
+      projectId: project!._id,
       name: sanitizeText(name),
       code: toCode(code ?? name, 3),
       sortIndex: nextSortIndex
@@ -48,8 +49,8 @@ router.get(
       return sendSuccess(res, []);
     }
     // Verify user owns the project
-    const project = await ProjectModel.findOne({ _id: projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
+    const project = await ProjectModel.findById(projectId);
+    ensureProjectRole(project, req.user!.id, "technician", "Project không tồn tại hoặc không có quyền");
 
     const buildings = await BuildingModel.find({ projectId }).sort({ sortIndex: 1, createdAt: 1 });
     return sendSuccess(res, buildings);
@@ -66,8 +67,12 @@ router.patch(
     const building = await BuildingModel.findById(req.params.id);
     if (!building) throw errors.notFound("Building không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: building.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(building.projectId),
+      req.user!.id,
+      "admin",
+      "Building không tồn tại hoặc không có quyền"
+    );
 
     building.name = sanitizeText(name);
     building.code = toCode(name, 3);
@@ -84,8 +89,12 @@ router.delete(
     if (!building) throw errors.notFound("Building không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: building.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Building không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(building.projectId),
+      req.user!.id,
+      "admin",
+      "Building không tồn tại hoặc không có quyền"
+    );
 
     await BuildingModel.deleteOne({ _id: req.params.id });
     return sendSuccess(res, { ok: true });

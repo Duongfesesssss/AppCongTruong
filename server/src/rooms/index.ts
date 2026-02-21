@@ -13,6 +13,7 @@ import { createUploader } from "../lib/uploads";
 import { sanitizeText } from "../lib/utils";
 import { objectIdSchema } from "../lib/validators";
 import { ProjectModel } from "../projects/project.model";
+import { ensureProjectRole } from "../projects/project-access";
 import { BuildingModel } from "../buildings/building.model";
 import { FloorModel } from "../floors/floor.model";
 import { DrawingModel } from "../drawings/drawing.model";
@@ -80,10 +81,16 @@ router.post(
       throw errors.notFound("Drawing không tồn tại");
     }
 
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
-    if (!project) {
+    try {
+      ensureProjectRole(
+        await ProjectModel.findById(drawing.projectId),
+        req.user!.id,
+        "admin",
+        "Khong co quyen"
+      );
+    } catch (err) {
       cleanupUpload(req.file);
-      throw errors.notFound("Không có quyền");
+      throw err;
     }
 
     let rows: Array<Record<string, unknown>> = [];
@@ -213,8 +220,7 @@ router.get(
     const drawing = await DrawingModel.findById(drawingId);
     if (!drawing) throw errors.notFound("Drawing không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Không có quyền");
+    ensureProjectRole(await ProjectModel.findById(drawing.projectId), req.user!.id, "technician", "Khong co quyen");
 
     const roomFilter: Record<string, unknown> = {
       projectId: drawing.projectId,

@@ -6,6 +6,7 @@ import { requireAuth } from "../middlewares/require-auth";
 import { errors } from "../lib/errors";
 import { TaskModel } from "../tasks/task.model";
 import { ProjectModel } from "../projects/project.model";
+import { ensureProjectRole } from "../projects/project-access";
 import { ZoneModel } from "./zone.model";
 import { createZoneSchema, updateZoneSchema, zoneIdSchema } from "./zone.schema";
 import { sanitizeText } from "../lib/utils";
@@ -31,8 +32,12 @@ router.post(
     if (!task) throw errors.notFound("Task không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "admin",
+      "Task không tồn tại hoặc không có quyền"
+    );
 
     const exists = await ZoneModel.findOne({ taskId: task._id });
     if (exists) throw errors.conflict("Task đã có zone");
@@ -63,8 +68,12 @@ router.put(
     const task = await TaskModel.findById(zone.taskId);
     if (!task) throw errors.notFound("Zone không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Zone không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "admin",
+      "Zone không tồn tại hoặc không có quyền"
+    );
 
     const { shape, style, status, notes } = req.body as {
       shape?: Record<string, unknown>;
@@ -96,8 +105,12 @@ router.delete(
     const task = await TaskModel.findById(zone.taskId);
     if (!task) throw errors.notFound("Zone không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Zone không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "admin",
+      "Zone không tồn tại hoặc không có quyền"
+    );
 
     await zone.deleteOne();
     return sendSuccess(res, { ok: true });

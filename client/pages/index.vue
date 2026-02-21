@@ -45,6 +45,7 @@
             </button>
             <!-- Nút thêm Task (bật chế độ đặt pin) -->
             <button
+              v-if="canManageStructure"
               class="flex items-center gap-1 rounded-lg border px-2 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium"
               :class="placingPin
                 ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
@@ -67,6 +68,7 @@
           :error="error"
           :placing-pin="placingPin"
           :selected-pin-id="selectedTask?._id"
+          :can-edit-pins="canManageStructure"
           @pin-click="handlePinClick"
           @zone-click="handleZoneClick"
           @place-pin="handlePlacePin"
@@ -81,7 +83,9 @@
         <section class="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
           <h3 class="text-sm sm:text-base font-semibold text-slate-900">Danh sách Task ({{ pins.length }})</h3>
           <p v-if="pins.length === 0" class="mt-3 text-center text-xs sm:text-sm text-slate-400">
-            Chưa có task nào. Bấm "Thêm Task" rồi nhấn vào bản vẽ để tạo.
+            {{ canManageStructure
+              ? 'Chưa có task nào. Bấm "Thêm Task" rồi nhấn vào bản vẽ để tạo.'
+              : 'Chưa có task nào trong bản vẽ này.' }}
           </p>
           <div v-else class="mt-2 sm:mt-3 space-y-1.5 sm:space-y-2">
             <div
@@ -129,6 +133,7 @@
           <TaskDetail
             :task-id="selectedTask._id || selectedTask.id"
             :task-data="selectedTask"
+            :can-delete-photo="canManageStructure"
             @updated="reloadDrawingData"
           />
         </section>
@@ -137,7 +142,7 @@
 
     <!-- Task Detail View (khi chọn từ tree) -->
     <template v-else-if="selected?.type === 'task'">
-      <TaskDetail :task-id="selected.id" @updated="reloadTask" />
+      <TaskDetail :task-id="selected.id" :can-delete-photo="canManageStructure" @updated="reloadTask" />
     </template>
 
     <!-- Empty State -->
@@ -191,6 +196,7 @@ const downloadingDrawingImages = ref(false);
 
 const loading = ref(false);
 const error = ref("");
+const canManageStructure = computed(() => selected.value?.canManageStructure === true);
 
 // Pin placement
 const placingPin = ref(false);
@@ -366,6 +372,10 @@ const downloadDrawingImages = async () => {
 
 // === Pin Placement Flow ===
 const togglePlacement = () => {
+  if (!canManageStructure.value) {
+    toast.push("Tai khoan ky thuat vien khong co quyen quan ly task/pin", "info");
+    return;
+  }
   if (placingPin.value) {
     placingPin.value = false;
   } else {
@@ -375,6 +385,7 @@ const togglePlacement = () => {
 };
 
 const handlePlacePin = (coords: { pinX: number; pinY: number }) => {
+  if (!canManageStructure.value) return;
   // Nhận toạ độ từ PlanViewer → mở form tạo task
   pendingPinCoords.value = coords;
   showTaskCreator.value = true;
@@ -425,6 +436,10 @@ const handleTaskCreated = async (createdData: unknown) => {
 
 // === Pin Move (kéo thả pin) ===
 const handlePinMove = async (data: { pinId: string; pinX: number; pinY: number }) => {
+  if (!canManageStructure.value) {
+    toast.push("Tai khoan ky thuat vien khong co quyen di chuyen pin", "info");
+    return;
+  }
   // Optimistic update: cập nhật vị trí pin ngay trên UI
   const pin = pins.value.find((p: any) => (p._id || p.id) === data.pinId);
   const oldX = pin?.pinX;

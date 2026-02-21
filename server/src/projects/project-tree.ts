@@ -7,7 +7,8 @@ import { validate } from "../middlewares/validation";
 import { errors } from "../lib/errors";
 import { sanitizeText, toCode } from "../lib/utils";
 import { objectIdSchema } from "../lib/validators";
-import { ProjectModel } from "./project.model";
+import { buildProjectAccessFilter, ensureProjectRole, getProjectRole } from "./project-access";
+import { ProjectModel, type ProjectMemberRole } from "./project.model";
 import { BuildingModel } from "../buildings/building.model";
 import { FloorModel } from "../floors/floor.model";
 import { DisciplineModel } from "../disciplines/discipline.model";
@@ -38,14 +39,27 @@ type TreeNode = {
   name: string;
   type: string;
   sortIndex: number;
+  projectId: string;
+  projectRole: ProjectMemberRole;
+  canManageStructure: boolean;
   children: TreeNode[];
 };
 
-const createNode = (id: string, name: string, type: string, sortIndex = 0): TreeNode => ({
+const createNode = (
+  id: string,
+  name: string,
+  type: string,
+  projectId: string,
+  projectRole: ProjectMemberRole,
+  sortIndex = 0
+): TreeNode => ({
   id,
   name,
   type,
   sortIndex,
+  projectId,
+  projectRole,
+  canManageStructure: projectRole === "admin",
   children: []
 });
 
@@ -89,6 +103,10 @@ const toCopyName = (name: string) => {
   return clean.endsWith("(Copy)") ? `${clean} 2` : `${clean} (Copy)`;
 };
 
+const buildAdminProjectFilter = (userId: string) => ({
+  $or: [{ userId }, { members: { $elemMatch: { userId, role: "admin" } } }]
+});
+
 const buildUniqueProjectCode = async (userId: string, name: string) => {
   const base = toCode(`${name}COPY`, 8);
   let candidate = base;
@@ -104,8 +122,15 @@ router.get(
   "/",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const userProjects = await ProjectModel.find({ userId: req.user!.id }).lean();
-    const projectIds = userProjects.map((project) => project._id);
+    const projects = await ProjectModel.find(buildProjectAccessFilter(req.user!.id)).lean();
+    const projectsWithRole = projects
+      .map((project) => ({
+        project,
+        role: getProjectRole(project, req.user!.id)
+      }))
+      .filter((item): item is { project: (typeof projects)[number]; role: ProjectMemberRole } => !!item.role);
+
+    const projectIds = projectsWithRole.map((item) => item.project._id);
 
     const [buildings, floors, disciplines, drawings, tasks] = await Promise.all([
       BuildingModel.find({ projectId: { $in: projectIds } }).lean(),
@@ -121,45 +146,85 @@ router.get(
     const disciplineMap = new Map<string, TreeNode>();
     const drawingMap = new Map<string, TreeNode>();
 
-    userProjects.forEach((project) => {
+    projectsWithRole.forEach(({ project, role }) => {
+      const projectId = project._id.toString();
       projectMap.set(
-        project._id.toString(),
-        createNode(project._id.toString(), project.name, "project", project.sortIndex ?? 0)
+        projectId,
+        createNode(projectId, project.name, "project", projectId, role, project.sortIndex ?? 0)
       );
     });
 
     buildings.forEach((building) => {
-      const node = createNode(building._id.toString(), building.name, "building", building.sortIndex ?? 0);
-      buildingMap.set(building._id.toString(), node);
       const parent = projectMap.get(building.projectId.toString());
-      if (parent) parent.children.push(node);
+      if (!parent) return;
+      const node = createNode(
+        building._id.toString(),
+        building.name,
+        "building",
+        parent.projectId,
+        parent.projectRole,
+        building.sortIndex ?? 0
+      );
+      buildingMap.set(building._id.toString(), node);
+      parent.children.push(node);
     });
 
     floors.forEach((floor) => {
-      const node = createNode(floor._id.toString(), floor.name, "floor", floor.sortIndex ?? 0);
-      floorMap.set(floor._id.toString(), node);
       const parent = buildingMap.get(floor.buildingId.toString());
-      if (parent) parent.children.push(node);
+      if (!parent) return;
+      const node = createNode(
+        floor._id.toString(),
+        floor.name,
+        "floor",
+        parent.projectId,
+        parent.projectRole,
+        floor.sortIndex ?? 0
+      );
+      floorMap.set(floor._id.toString(), node);
+      parent.children.push(node);
     });
 
     disciplines.forEach((discipline) => {
-      const node = createNode(discipline._id.toString(), discipline.name, "discipline", discipline.sortIndex ?? 0);
-      disciplineMap.set(discipline._id.toString(), node);
       const parent = floorMap.get(discipline.floorId.toString());
-      if (parent) parent.children.push(node);
+      if (!parent) return;
+      const node = createNode(
+        discipline._id.toString(),
+        discipline.name,
+        "discipline",
+        parent.projectId,
+        parent.projectRole,
+        discipline.sortIndex ?? 0
+      );
+      disciplineMap.set(discipline._id.toString(), node);
+      parent.children.push(node);
     });
 
     drawings.forEach((drawing) => {
-      const node = createNode(drawing._id.toString(), drawing.name, "drawing", drawing.sortIndex ?? 0);
-      drawingMap.set(drawing._id.toString(), node);
       const parent = disciplineMap.get(drawing.disciplineId.toString());
-      if (parent) parent.children.push(node);
+      if (!parent) return;
+      const node = createNode(
+        drawing._id.toString(),
+        drawing.name,
+        "drawing",
+        parent.projectId,
+        parent.projectRole,
+        drawing.sortIndex ?? 0
+      );
+      drawingMap.set(drawing._id.toString(), node);
+      parent.children.push(node);
     });
 
     tasks.forEach((task) => {
-      const node = createNode(task._id.toString(), task.pinName ?? task.pinCode, "task", 0);
       const parent = drawingMap.get(task.drawingId.toString());
-      if (parent) parent.children.push(node);
+      if (!parent) return;
+      const node = createNode(
+        task._id.toString(),
+        task.pinName ?? task.pinCode,
+        "task",
+        parent.projectId,
+        parent.projectRole
+      );
+      parent.children.push(node);
     });
 
     const tree = Array.from(projectMap.values());
@@ -182,32 +247,48 @@ router.post(
     let siblings: Array<{ _id: { toString: () => string }; sortIndex?: number; save: () => Promise<unknown> }> = [];
 
     if (nodeType === "project") {
-      const current = await ProjectModel.findOne({ _id: nodeId, userId: req.user!.id });
-      if (!current) throw errors.notFound("Project không tồn tại");
-      siblings = await ProjectModel.find({ userId: req.user!.id }).sort({ sortIndex: 1, createdAt: 1 });
+      const current = await ProjectModel.findById(nodeId);
+      ensureProjectRole(current, req.user!.id, "admin", "Project khong ton tai hoac khong co quyen");
+      siblings = await ProjectModel.find(buildAdminProjectFilter(req.user!.id)).sort({ sortIndex: 1, createdAt: 1 });
     } else if (nodeType === "building") {
       const current = await BuildingModel.findById(nodeId);
-      if (!current) throw errors.notFound("Building không tồn tại");
-      const project = await ProjectModel.findOne({ _id: current.projectId, userId: req.user!.id });
-      if (!project) throw errors.notFound("Không có quyền");
+      if (!current) throw errors.notFound("Building khong ton tai");
+      ensureProjectRole(
+        await ProjectModel.findById(current.projectId),
+        req.user!.id,
+        "admin",
+        "Khong co quyen"
+      );
       siblings = await BuildingModel.find({ projectId: current.projectId }).sort({ sortIndex: 1, createdAt: 1 });
     } else if (nodeType === "floor") {
       const current = await FloorModel.findById(nodeId);
-      if (!current) throw errors.notFound("Floor không tồn tại");
-      const project = await ProjectModel.findOne({ _id: current.projectId, userId: req.user!.id });
-      if (!project) throw errors.notFound("Không có quyền");
+      if (!current) throw errors.notFound("Floor khong ton tai");
+      ensureProjectRole(
+        await ProjectModel.findById(current.projectId),
+        req.user!.id,
+        "admin",
+        "Khong co quyen"
+      );
       siblings = await FloorModel.find({ buildingId: current.buildingId }).sort({ sortIndex: 1, createdAt: 1 });
     } else if (nodeType === "discipline") {
       const current = await DisciplineModel.findById(nodeId);
-      if (!current) throw errors.notFound("Discipline không tồn tại");
-      const project = await ProjectModel.findOne({ _id: current.projectId, userId: req.user!.id });
-      if (!project) throw errors.notFound("Không có quyền");
+      if (!current) throw errors.notFound("Discipline khong ton tai");
+      ensureProjectRole(
+        await ProjectModel.findById(current.projectId),
+        req.user!.id,
+        "admin",
+        "Khong co quyen"
+      );
       siblings = await DisciplineModel.find({ floorId: current.floorId }).sort({ sortIndex: 1, createdAt: 1 });
     } else {
       const current = await DrawingModel.findById(nodeId);
-      if (!current) throw errors.notFound("Drawing không tồn tại");
-      const project = await ProjectModel.findOne({ _id: current.projectId, userId: req.user!.id });
-      if (!project) throw errors.notFound("Không có quyền");
+      if (!current) throw errors.notFound("Drawing khong ton tai");
+      ensureProjectRole(
+        await ProjectModel.findById(current.projectId),
+        req.user!.id,
+        "admin",
+        "Khong co quyen"
+      );
       siblings = await DrawingModel.find({ disciplineId: current.disciplineId }).sort({ sortIndex: 1, createdAt: 1 });
     }
 
@@ -217,7 +298,7 @@ router.post(
 
     await normalizeSiblingOrder(siblings);
     const currentIndex = siblings.findIndex((item) => item._id.toString() === nodeId);
-    if (currentIndex < 0) throw errors.notFound("Node không tồn tại");
+    if (currentIndex < 0) throw errors.notFound("Node khong ton tai");
 
     const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
     if (targetIndex < 0 || targetIndex >= siblings.length) {
@@ -245,18 +326,25 @@ router.post(
     const { nodeType, nodeId } = req.body as { nodeType: NodeType; nodeId: string };
 
     if (nodeType === "project") {
-      const current = await ProjectModel.findOne({ _id: nodeId, userId: req.user!.id });
-      if (!current) throw errors.notFound("Project không tồn tại");
+      const current = await ProjectModel.findById(nodeId);
+      ensureProjectRole(current, req.user!.id, "admin", "Project khong ton tai hoac khong co quyen");
 
-      const name = toCopyName(current.name);
+      const name = toCopyName(current!.name);
       const code = await buildUniqueProjectCode(req.user!.id, name);
       const sortIndex = await getNextSortIndex(ProjectModel, { userId: req.user!.id });
 
       const duplicated = await ProjectModel.create({
         userId: req.user!.id,
+        members: [
+          {
+            userId: req.user!.id,
+            role: "admin",
+            addedBy: req.user!.id
+          }
+        ],
         name,
         code,
-        description: current.description,
+        description: current!.description,
         sortIndex
       });
       return sendSuccess(res, duplicated, {}, 201);
@@ -264,9 +352,13 @@ router.post(
 
     if (nodeType === "building") {
       const current = await BuildingModel.findById(nodeId);
-      if (!current) throw errors.notFound("Building không tồn tại");
-      const project = await ProjectModel.findOne({ _id: current.projectId, userId: req.user!.id });
-      if (!project) throw errors.notFound("Không có quyền");
+      if (!current) throw errors.notFound("Building khong ton tai");
+      ensureProjectRole(
+        await ProjectModel.findById(current.projectId),
+        req.user!.id,
+        "admin",
+        "Khong co quyen"
+      );
 
       const name = toCopyName(current.name);
       const sortIndex = await getNextSortIndex(BuildingModel, { projectId: current.projectId });
@@ -281,9 +373,13 @@ router.post(
 
     if (nodeType === "floor") {
       const current = await FloorModel.findById(nodeId);
-      if (!current) throw errors.notFound("Floor không tồn tại");
-      const project = await ProjectModel.findOne({ _id: current.projectId, userId: req.user!.id });
-      if (!project) throw errors.notFound("Không có quyền");
+      if (!current) throw errors.notFound("Floor khong ton tai");
+      ensureProjectRole(
+        await ProjectModel.findById(current.projectId),
+        req.user!.id,
+        "admin",
+        "Khong co quyen"
+      );
 
       const name = toCopyName(current.name);
       const sortIndex = await getNextSortIndex(FloorModel, { buildingId: current.buildingId });
@@ -300,9 +396,13 @@ router.post(
 
     if (nodeType === "discipline") {
       const current = await DisciplineModel.findById(nodeId);
-      if (!current) throw errors.notFound("Discipline không tồn tại");
-      const project = await ProjectModel.findOne({ _id: current.projectId, userId: req.user!.id });
-      if (!project) throw errors.notFound("Không có quyền");
+      if (!current) throw errors.notFound("Discipline khong ton tai");
+      ensureProjectRole(
+        await ProjectModel.findById(current.projectId),
+        req.user!.id,
+        "admin",
+        "Khong co quyen"
+      );
 
       const name = toCopyName(current.name);
       const sortIndex = await getNextSortIndex(DisciplineModel, { floorId: current.floorId });
@@ -318,9 +418,13 @@ router.post(
     }
 
     const current = await DrawingModel.findById(nodeId);
-    if (!current) throw errors.notFound("Drawing không tồn tại");
-    const project = await ProjectModel.findOne({ _id: current.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Không có quyền");
+    if (!current) throw errors.notFound("Drawing khong ton tai");
+    ensureProjectRole(
+      await ProjectModel.findById(current.projectId),
+      req.user!.id,
+      "admin",
+      "Khong co quyen"
+    );
 
     const name = toCopyName(current.name);
     const sortIndex = await getNextSortIndex(DrawingModel, { disciplineId: current.disciplineId });

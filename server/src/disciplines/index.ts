@@ -7,6 +7,7 @@ import { errors } from "../lib/errors";
 import { FloorModel } from "../floors/floor.model";
 import { BuildingModel } from "../buildings/building.model";
 import { ProjectModel } from "../projects/project.model";
+import { ensureProjectRole } from "../projects/project-access";
 import { DisciplineModel } from "./discipline.model";
 import { createDisciplineSchema, listDisciplineSchema } from "./discipline.schema";
 import { sanitizeText, toCode } from "../lib/utils";
@@ -26,8 +27,8 @@ router.post(
     const building = await BuildingModel.findById(floor.buildingId);
     if (!building) throw errors.notFound("Building không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: floor.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
+    const project = await ProjectModel.findById(floor.projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Project không tồn tại hoặc không có quyền");
 
     const lastDiscipline = await DisciplineModel.findOne({ floorId: floor._id })
       .sort({ sortIndex: -1, createdAt: -1 })
@@ -36,7 +37,7 @@ router.post(
     const nextSortIndex = (lastDiscipline?.sortIndex ?? 0) + 1;
 
     const discipline = await DisciplineModel.create({
-      projectId: project._id,
+      projectId: project!._id,
       buildingId: building._id,
       floorId: floor._id,
       name: sanitizeText(name),
@@ -62,8 +63,12 @@ router.get(
     const floor = await FloorModel.findById(floorId);
     if (!floor) throw errors.notFound("Floor không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: floor.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Floor không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(floor.projectId),
+      req.user!.id,
+      "technician",
+      "Floor không tồn tại hoặc không có quyền"
+    );
 
     const disciplines = await DisciplineModel.find({ floorId }).sort({ sortIndex: 1, createdAt: 1 });
     return sendSuccess(res, disciplines);
@@ -82,8 +87,12 @@ router.patch(
 
     const floor = await FloorModel.findById(discipline.floorId);
     if (!floor) throw errors.notFound("Discipline không tồn tại");
-    const project = await ProjectModel.findOne({ _id: floor.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(floor.projectId),
+      req.user!.id,
+      "admin",
+      "Discipline không tồn tại hoặc không có quyền"
+    );
 
     discipline.name = sanitizeText(name);
     discipline.code = toCode(name, 3);
@@ -103,8 +112,12 @@ router.delete(
     const floor = await FloorModel.findById(discipline.floorId);
     if (!floor) throw errors.notFound("Discipline không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: floor.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Discipline không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(floor.projectId),
+      req.user!.id,
+      "admin",
+      "Discipline không tồn tại hoặc không có quyền"
+    );
 
     await DisciplineModel.deleteOne({ _id: req.params.id });
     return sendSuccess(res, { ok: true });

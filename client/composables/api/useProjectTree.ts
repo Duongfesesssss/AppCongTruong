@@ -1,9 +1,14 @@
-﻿import { useApi } from "./useApi";
+import { useApi } from "./useApi";
+
+export type ProjectRole = "admin" | "technician";
 
 export type ProjectTreeNode = {
   id: string;
   name: string;
   type: string;
+  projectId: string;
+  projectRole: ProjectRole;
+  canManageStructure: boolean;
   children: ProjectTreeNode[];
 };
 

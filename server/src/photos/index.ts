@@ -15,6 +15,7 @@ import { uploadLimiter } from "../middlewares/rate-limit";
 import { getS3SignedUrl, deleteFromS3, getS3Stream } from "../lib/s3";
 import { TaskModel } from "../tasks/task.model";
 import { ProjectModel } from "../projects/project.model";
+import { ensureProjectRole } from "../projects/project-access";
 import { PhotoModel } from "./photo.model";
 import { createPhotoSchema, photoIdSchema, updatePhotoSchema } from "./photo.schema";
 
@@ -98,8 +99,12 @@ router.post(
     if (!task) throw errors.notFound("Task không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "technician",
+      "Task không tồn tại hoặc không có quyền"
+    );
 
     // Get image dimensions
     let width: number | undefined;
@@ -154,8 +159,12 @@ router.patch(
     const task = await TaskModel.findById(photo.taskId);
     if (!task) throw errors.notFound("Photo không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Photo không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "technician",
+      "Photo không tồn tại hoặc không có quyền"
+    );
 
     photo.annotations = req.body.annotations;
     await photo.save();
@@ -176,8 +185,12 @@ router.get(
     const task = await TaskModel.findById(photo.taskId);
     if (!task) throw errors.notFound("Photo không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Photo không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "technician",
+      "Photo không tồn tại hoặc không có quyền"
+    );
 
     // CORS headers cho embedded content
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -214,8 +227,12 @@ router.delete(
     const task = await TaskModel.findById(photo.taskId);
     if (!task) throw errors.notFound("Photo không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Photo không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "admin",
+      "Photo không tồn tại hoặc không có quyền"
+    );
 
     // Delete file from storage
     if (config.storageType === "s3") {
@@ -257,8 +274,12 @@ router.post(
     const task = await TaskModel.findById(photo.taskId);
     if (!task) throw errors.notFound("Photo không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Photo không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "technician",
+      "Photo không tồn tại hoặc không có quyền"
+    );
 
     try {
       // Read Excel file

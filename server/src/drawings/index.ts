@@ -11,6 +11,7 @@ import { DisciplineModel } from "../disciplines/discipline.model";
 import { FloorModel } from "../floors/floor.model";
 import { BuildingModel } from "../buildings/building.model";
 import { ProjectModel } from "../projects/project.model";
+import { buildProjectAccessFilter, ensureProjectRole } from "../projects/project-access";
 import { createDrawingSchema, drawingIdSchema, listDrawingSchema } from "./drawing.schema";
 import { DrawingModel } from "./drawing.model";
 import { createUploader, handleFileUpload } from "../lib/uploads";
@@ -89,8 +90,8 @@ router.post(
     const building = await BuildingModel.findById(discipline.buildingId);
     if (!building) throw errors.notFound("Building không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: discipline.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
+    const project = await ProjectModel.findById(discipline.projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Project không tồn tại hoặc không có quyền");
 
     // Handle file upload (S3 or local)
     const storageKey = await handleFileUpload(req.file, "drawings");
@@ -102,7 +103,7 @@ router.post(
     const nextSortIndex = (lastDrawing?.sortIndex ?? 0) + 1;
 
     const drawing = await DrawingModel.create({
-      projectId: project._id,
+      projectId: project!._id,
       buildingId: building._id,
       floorId: floor._id,
       disciplineId: discipline._id,
@@ -124,7 +125,7 @@ router.get(
   validate(listDrawingSchema),
   asyncHandler(async (req, res) => {
     // Get user's project IDs
-    const userProjects = await ProjectModel.find({ userId: req.user!.id }).select("_id");
+    const userProjects = await ProjectModel.find(buildProjectAccessFilter(req.user!.id)).select("_id");
     const projectIds = userProjects.map((p) => p._id);
 
     const filter: Record<string, unknown> = { projectId: { $in: projectIds } };
@@ -144,8 +145,12 @@ router.get(
     if (!drawing) throw errors.notFound("Drawing không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Drawing không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(drawing.projectId),
+      req.user!.id,
+      "technician",
+      "Drawing không tồn tại hoặc không có quyền"
+    );
 
     return sendSuccess(res, drawing);
   })
@@ -160,8 +165,12 @@ router.get(
     if (!drawing) throw errors.notFound("Drawing không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Drawing không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(drawing.projectId),
+      req.user!.id,
+      "technician",
+      "Drawing không tồn tại hoặc không có quyền"
+    );
 
     // CORS headers cho embedded content
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -195,8 +204,12 @@ router.get(
     if (!drawing) throw errors.notFound("Drawing không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Drawing không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(drawing.projectId),
+      req.user!.id,
+      "technician",
+      "Drawing không tồn tại hoặc không có quyền"
+    );
 
     const zones = await ZoneModel.find({ drawingId: req.params.id }).sort({ createdAt: -1 });
     return sendSuccess(res, zones);
@@ -213,8 +226,12 @@ router.patch(
     const drawing = await DrawingModel.findById(req.params.id);
     if (!drawing) throw errors.notFound("Drawing không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(drawing.projectId),
+      req.user!.id,
+      "admin",
+      "Drawing không tồn tại hoặc không có quyền"
+    );
 
     drawing.name = sanitizeText(name);
     await drawing.save();
@@ -231,8 +248,12 @@ router.delete(
     if (!drawing) throw errors.notFound("Drawing không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Drawing không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(drawing.projectId),
+      req.user!.id,
+      "admin",
+      "Drawing không tồn tại hoặc không có quyền"
+    );
 
     // Chỉ xoá file vật lý khi không còn drawing nào khác dùng chung storageKey
     const storageRefCount = await DrawingModel.countDocuments({

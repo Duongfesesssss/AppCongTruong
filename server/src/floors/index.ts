@@ -6,6 +6,7 @@ import { requireAuth } from "../middlewares/require-auth";
 import { errors } from "../lib/errors";
 import { BuildingModel } from "../buildings/building.model";
 import { ProjectModel } from "../projects/project.model";
+import { ensureProjectRole } from "../projects/project-access";
 import { FloorModel } from "./floor.model";
 import { createFloorSchema, listFloorSchema } from "./floor.schema";
 import { sanitizeText, toCode } from "../lib/utils";
@@ -27,8 +28,8 @@ router.post(
     const building = await BuildingModel.findById(buildingId);
     if (!building) throw errors.notFound("Building không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: building.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Project không tồn tại hoặc không có quyền");
+    const project = await ProjectModel.findById(building.projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Project không tồn tại hoặc không có quyền");
 
     const lastFloor = await FloorModel.findOne({ buildingId: building._id })
       .sort({ sortIndex: -1, createdAt: -1 })
@@ -37,7 +38,7 @@ router.post(
     const nextSortIndex = (lastFloor?.sortIndex ?? 0) + 1;
 
     const floor = await FloorModel.create({
-      projectId: project._id,
+      projectId: project!._id,
       buildingId: building._id,
       name: sanitizeText(name),
       code: toCode(code ?? name, 3),
@@ -63,8 +64,12 @@ router.get(
     const building = await BuildingModel.findById(buildingId);
     if (!building) throw errors.notFound("Building không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: building.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Building không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(building.projectId),
+      req.user!.id,
+      "technician",
+      "Building không tồn tại hoặc không có quyền"
+    );
 
     const floors = await FloorModel.find({ buildingId }).sort({ sortIndex: 1, createdAt: 1 });
     return sendSuccess(res, floors);
@@ -83,8 +88,12 @@ router.patch(
 
     const building = await BuildingModel.findById(floor.buildingId);
     if (!building) throw errors.notFound("Floor không tồn tại");
-    const project = await ProjectModel.findOne({ _id: building.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(building.projectId),
+      req.user!.id,
+      "admin",
+      "Floor không tồn tại hoặc không có quyền"
+    );
 
     floor.name = sanitizeText(name);
     floor.code = toCode(name, 3);
@@ -104,8 +113,12 @@ router.delete(
     const building = await BuildingModel.findById(floor.buildingId);
     if (!building) throw errors.notFound("Floor không tồn tại");
 
-    const project = await ProjectModel.findOne({ _id: building.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Floor không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(building.projectId),
+      req.user!.id,
+      "admin",
+      "Floor không tồn tại hoặc không có quyền"
+    );
 
     await FloorModel.deleteOne({ _id: req.params.id });
     return sendSuccess(res, { ok: true });

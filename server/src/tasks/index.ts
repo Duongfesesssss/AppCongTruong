@@ -9,6 +9,7 @@ import { CounterModel } from "./counter.model";
 import { createOrUpdateTaskSchema, listTaskSchema, taskIdSchema } from "./task.schema";
 import { DrawingModel } from "../drawings/drawing.model";
 import { ProjectModel } from "../projects/project.model";
+import { buildProjectAccessFilter, ensureProjectRole } from "../projects/project-access";
 import { BuildingModel } from "../buildings/building.model";
 import { FloorModel } from "../floors/floor.model";
 import { DisciplineModel } from "../disciplines/discipline.model";
@@ -46,8 +47,12 @@ router.post(
       if (!task) throw errors.notFound("Task không tồn tại");
 
       // Check ownership through project
-      const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-      if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
+      ensureProjectRole(
+        await ProjectModel.findById(task.projectId),
+        req.user!.id,
+        "admin",
+        "Task không tồn tại hoặc không có quyền"
+      );
 
       if (body.pinX !== undefined) task.pinX = body.pinX;
       if (body.pinY !== undefined) task.pinY = body.pinY;
@@ -82,8 +87,8 @@ router.post(
     if (!drawing) throw errors.notFound("Drawing không tồn tại");
 
     // Check ownership through project
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Drawing không tồn tại hoặc không có quyền");
+    const project = await ProjectModel.findById(drawing.projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Drawing không tồn tại hoặc không có quyền");
 
     const building = await BuildingModel.findById(drawing.buildingId);
     const floor = await FloorModel.findById(drawing.floorId);
@@ -94,7 +99,7 @@ router.post(
     }
 
     const counter = await CounterModel.findOneAndUpdate(
-      { _id: project._id.toString() },
+      { _id: project!._id.toString() },
       { $inc: { seq: 1 } },
       { new: true, upsert: true }
     );
@@ -103,7 +108,7 @@ router.post(
     const trimmedPinName = body.pinName?.trim();
     if (trimmedPinName) {
       const duplicate = await TaskModel.findOne({
-        projectId: project._id,
+        projectId: project!._id,
         pinName: { $regex: new RegExp(`^${escapeRegExp(trimmedPinName)}$`, "i") }
       });
       if (duplicate) {
@@ -112,10 +117,10 @@ router.post(
     }
 
     const gewerkCode = toCode(body.gewerk ?? "NA", 2);
-    const pinCode = formatPinCode(project.code, building.code, floor.code, gewerkCode, counter.seq);
+    const pinCode = formatPinCode(project!.code, building.code, floor.code, gewerkCode, counter.seq);
 
     const task = await TaskModel.create({
-      projectId: project._id,
+      projectId: project!._id,
       buildingId: building._id,
       floorId: floor._id,
       disciplineId: discipline._id,
@@ -147,11 +152,16 @@ router.get(
     const drawing = await DrawingModel.findById(drawingId);
     if (!drawing) return sendSuccess(res, []);
 
-    const project = await ProjectModel.findOne({ _id: drawing.projectId, userId: req.user!.id });
+    const project = await ProjectModel.findById(drawing.projectId);
     if (!project) return sendSuccess(res, []);
+    try {
+      ensureProjectRole(project, req.user!.id, "technician", "Drawing không tồn tại hoặc không có quyền");
+    } catch {
+      return sendSuccess(res, []);
+    }
 
     const tasks = await TaskModel.find(
-      { projectId: project._id, pinName: { $exists: true, $ne: "" } },
+      { projectId: project!._id, pinName: { $exists: true, $ne: "" } },
       { pinName: 1, pinCode: 1, roomName: 1, gewerk: 1, status: 1, category: 1, description: 1, _id: 0 }
     ).sort({ createdAt: -1 }).limit(100).lean();
 
@@ -173,11 +183,16 @@ router.get(
   validate(listTaskSchema),
   asyncHandler(async (req, res) => {
     // Get user's project IDs first
-    const userProjects = await ProjectModel.find({ userId: req.user!.id }).select("_id");
+    const userProjects = await ProjectModel.find(buildProjectAccessFilter(req.user!.id)).select("_id");
     const projectIds = userProjects.map((p) => p._id);
+    const projectIdSet = new Set(projectIds.map((projectId) => projectId.toString()));
 
     const filter: Record<string, unknown> = { projectId: { $in: projectIds } };
-    if (req.query.projectId) filter.projectId = req.query.projectId;
+    if (req.query.projectId) {
+      const requestedProjectId = String(req.query.projectId);
+      if (!projectIdSet.has(requestedProjectId)) return sendSuccess(res, []);
+      filter.projectId = requestedProjectId;
+    }
     if (req.query.drawingId) filter.drawingId = req.query.drawingId;
     if (req.query.status) filter.status = req.query.status;
     if (req.query.category) filter.category = req.query.category;
@@ -196,8 +211,8 @@ router.get(
     if (!task) throw errors.notFound("Task không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
+    const project = await ProjectModel.findById(task.projectId);
+    ensureProjectRole(project, req.user!.id, "technician", "Task không tồn tại hoặc không có quyền");
 
     return sendSuccess(res, task);
   })
@@ -212,8 +227,8 @@ router.get(
     if (!task) throw errors.notFound("Task không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
+    const project = await ProjectModel.findById(task.projectId);
+    ensureProjectRole(project, req.user!.id, "technician", "Task không tồn tại hoặc không có quyền");
 
     const [building, floor, discipline, drawing] = await Promise.all([
       BuildingModel.findById(task.buildingId),
@@ -222,7 +237,7 @@ router.get(
       DrawingModel.findById(task.drawingId)
     ]);
 
-    return sendSuccess(res, { task, project, building, floor, discipline, drawing });
+    return sendSuccess(res, { task, project: project!, building, floor, discipline, drawing });
   })
 );
 
@@ -235,8 +250,12 @@ router.get(
     if (!task) throw errors.notFound("Task không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "technician",
+      "Task không tồn tại hoặc không có quyền"
+    );
 
     const photos = await PhotoModel.find({ taskId: req.params.id }).sort({ createdAt: -1 });
     return sendSuccess(res, photos);
@@ -252,8 +271,12 @@ router.get(
     if (!task) throw errors.notFound("Task không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "technician",
+      "Task không tồn tại hoặc không có quyền"
+    );
 
     const zone = await ZoneModel.findOne({ taskId: req.params.id });
     if (!zone) throw errors.notFound("Zone không tồn tại");
@@ -271,8 +294,12 @@ router.delete(
     if (!task) throw errors.notFound("Task không tồn tại");
 
     // Check ownership
-    const project = await ProjectModel.findOne({ _id: task.projectId, userId: req.user!.id });
-    if (!project) throw errors.notFound("Task không tồn tại hoặc không có quyền");
+    ensureProjectRole(
+      await ProjectModel.findById(task.projectId),
+      req.user!.id,
+      "admin",
+      "Task không tồn tại hoặc không có quyền"
+    );
 
     // Delete associated photos and zones
     await Promise.all([

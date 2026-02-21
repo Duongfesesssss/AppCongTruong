@@ -157,6 +157,7 @@ const props = defineProps<{
   error: string;
   placingPin?: boolean;
   selectedPinId?: string;
+  canEditPins?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -426,7 +427,7 @@ const handlePinClick = (pin: Pin) => {
 };
 
 const startPinDrag = (event: PointerEvent, pin: Pin) => {
-  if (props.placingPin) return;
+  if (props.placingPin || props.canEditPins === false) return;
   const id = pin._id || pin.id;
   if (!id) return;
 

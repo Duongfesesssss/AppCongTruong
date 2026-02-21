@@ -1,14 +1,92 @@
-﻿import { Router } from "express";
+import { Router } from "express";
+import { type HydratedDocument, Types } from "mongoose";
 
 import { asyncHandler, sendSuccess } from "../lib/response";
 import { validate } from "../middlewares/validation";
 import { requireAuth } from "../middlewares/require-auth";
-import { ProjectModel } from "./project.model";
-import { createProjectSchema, listProjectSchema } from "./project.schema";
 import { sanitizeText, toCode } from "../lib/utils";
 import { errors } from "../lib/errors";
+import { UserModel } from "../users/user.model";
+import { ProjectModel, type ProjectDocument } from "./project.model";
+import { buildProjectAccessFilter, ensureProjectRole, getProjectRole } from "./project-access";
+import {
+  addProjectMemberSchema,
+  createProjectSchema,
+  listProjectMembersSchema,
+  listProjectSchema,
+  projectIdParamSchema,
+  removeProjectMemberSchema
+} from "./project.schema";
 
 const router = Router();
+const projectNotFoundMessage = "Project khong ton tai hoac khong co quyen";
+
+type ProjectDocWithMethods = HydratedDocument<ProjectDocument>;
+
+const toProjectResponse = (project: ProjectDocWithMethods, userId: string) => {
+  const role = getProjectRole(project, userId);
+  return {
+    ...project.toObject(),
+    myRole: role,
+    permissions: {
+      canManageStructure: role === "admin",
+      canManageMembers: role === "admin",
+      canProcessPhotos: role === "admin" || role === "technician"
+    }
+  };
+};
+
+const getProjectMembersPayload = async (project: ProjectDocWithMethods) => {
+  const uniqueUserIds = new Set<string>();
+  uniqueUserIds.add(project.userId.toString());
+  project.members.forEach((member) => uniqueUserIds.add(member.userId.toString()));
+
+  const users = await UserModel.find({ _id: { $in: Array.from(uniqueUserIds) } }).select("_id name email");
+  const userMap = new Map(users.map((user) => [user._id.toString(), user]));
+
+  const ownerUserId = project.userId.toString();
+  const owner = userMap.get(ownerUserId);
+
+  const members = [
+    {
+      user: {
+        id: ownerUserId,
+        name: owner?.name ?? "Owner",
+        email: owner?.email ?? ""
+      },
+      role: "admin" as const,
+      isOwner: true,
+      addedAt: project.createdAt
+    },
+    ...project.members
+      .filter((member) => member.userId.toString() !== ownerUserId)
+      .map((member) => {
+        const user = userMap.get(member.userId.toString());
+        return {
+          user: {
+            id: member.userId.toString(),
+            name: user?.name ?? "Unknown",
+            email: user?.email ?? ""
+          },
+          role: member.role,
+          isOwner: false,
+          addedAt: member.addedAt
+        };
+      })
+  ];
+
+  const sortedMembers = members.sort((a, b) => {
+    if (a.isOwner && !b.isOwner) return -1;
+    if (!a.isOwner && b.isOwner) return 1;
+    if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
+    return a.user.name.localeCompare(b.user.name, "vi");
+  });
+
+  return {
+    projectId: project._id.toString(),
+    members: sortedMembers
+  };
+};
 
 router.post(
   "/",
@@ -29,13 +107,122 @@ router.post(
 
     const project = await ProjectModel.create({
       userId: req.user!.id,
+      members: [
+        {
+          userId: req.user!.id,
+          role: "admin",
+          addedBy: req.user!.id
+        }
+      ],
       name: sanitizeText(name),
       code: toCode(code ?? name, 3),
       sortIndex: nextSortIndex,
       description: description ? sanitizeText(description) : undefined
     });
 
-    return sendSuccess(res, project, {}, 201);
+    return sendSuccess(res, toProjectResponse(project as ProjectDocWithMethods, req.user!.id), {}, 201);
+  })
+);
+
+router.get(
+  "/:id/members",
+  requireAuth,
+  validate(listProjectMembersSchema),
+  asyncHandler(async (req, res) => {
+    const project = (await ProjectModel.findById(req.params.id)) as ProjectDocWithMethods | null;
+    ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
+
+    return sendSuccess(res, await getProjectMembersPayload(project as ProjectDocWithMethods));
+  })
+);
+
+router.post(
+  "/:id/members",
+  requireAuth,
+  validate(addProjectMemberSchema),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params as { id: string };
+    const { email } = req.body as { email: string; role?: "technician" };
+
+    const project = (await ProjectModel.findById(id)) as ProjectDocWithMethods | null;
+    ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const targetUser = await UserModel.findOne({ email: normalizedEmail }).select("_id name email");
+    if (!targetUser) throw errors.notFound("Khong tim thay tai khoan theo email");
+
+    const targetId = targetUser._id.toString();
+    if (project!.userId.toString() === targetId) {
+      throw errors.conflict("Tai khoan nay da la admin cua project");
+    }
+
+    const existingMember = project!.members.find((member) => member.userId.toString() === targetId);
+    if (existingMember) {
+      existingMember.role = "technician";
+      existingMember.addedBy = new Types.ObjectId(req.user!.id);
+      existingMember.addedAt = new Date();
+      await project!.save();
+      return sendSuccess(res, {
+        user: {
+          id: targetUser._id.toString(),
+          name: targetUser.name,
+          email: targetUser.email
+        },
+        role: "technician",
+        created: false
+      });
+    }
+
+    project!.members.push({
+      userId: targetUser._id,
+      role: "technician",
+      addedBy: new Types.ObjectId(req.user!.id),
+      addedAt: new Date()
+    });
+    await project!.save();
+
+    return sendSuccess(
+      res,
+      {
+        user: {
+          id: targetUser._id.toString(),
+          name: targetUser.name,
+          email: targetUser.email
+        },
+        role: "technician",
+        created: true
+      },
+      {},
+      201
+    );
+  })
+);
+
+router.delete(
+  "/:id/members/:memberUserId",
+  requireAuth,
+  validate(removeProjectMemberSchema),
+  asyncHandler(async (req, res) => {
+    const { id, memberUserId } = req.params as { id: string; memberUserId: string };
+
+    const project = (await ProjectModel.findById(id)) as ProjectDocWithMethods | null;
+    ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
+
+    if (project!.userId.toString() === memberUserId) {
+      throw errors.validation("Khong the xoa owner cua project");
+    }
+    if (memberUserId === req.user!.id) {
+      throw errors.validation("Khong the tu xoa chinh minh khoi project");
+    }
+
+    const beforeCount = project!.members.length;
+    project!.members = project!.members.filter((member) => member.userId.toString() !== memberUserId);
+    if (beforeCount === project!.members.length) {
+      throw errors.notFound("Thanh vien khong ton tai trong project");
+    }
+
+    await project!.save();
+    return sendSuccess(res, { ok: true, removedUserId: memberUserId });
   })
 );
 
@@ -45,29 +232,32 @@ router.get(
   validate(listProjectSchema),
   asyncHandler(async (req, res) => {
     const q = (req.query.q as string | undefined)?.trim();
-    const filter: Record<string, unknown> = { userId: req.user!.id };
+    const filter: Record<string, unknown> = buildProjectAccessFilter(req.user!.id);
     if (q) filter.name = new RegExp(q, "i");
+
     const projects = await ProjectModel.find(filter).sort({ sortIndex: 1, createdAt: 1 });
-    return sendSuccess(res, projects);
+    return sendSuccess(
+      res,
+      projects.map((project) => toProjectResponse(project as ProjectDocWithMethods, req.user!.id))
+    );
   })
 );
 
 router.get(
   "/:id",
   requireAuth,
+  validate(projectIdParamSchema),
   asyncHandler(async (req, res) => {
-    const project = await ProjectModel.findOne({
-      _id: req.params.id,
-      userId: req.user!.id
-    });
-    if (!project) throw errors.notFound("Project không tồn tại");
-    return sendSuccess(res, project);
+    const project = (await ProjectModel.findById(req.params.id)) as ProjectDocWithMethods | null;
+    ensureProjectRole(project, req.user!.id, "technician", projectNotFoundMessage);
+    return sendSuccess(res, toProjectResponse(project as ProjectDocWithMethods, req.user!.id));
   })
 );
 
 router.put(
   "/:id",
   requireAuth,
+  validate(projectIdParamSchema),
   validate(createProjectSchema),
   asyncHandler(async (req, res) => {
     const { name, code, description } = req.body as {
@@ -76,51 +266,46 @@ router.put(
       description?: string;
     };
 
-    const project = await ProjectModel.findOneAndUpdate(
-      { _id: req.params.id, userId: req.user!.id },
-      {
-        name: sanitizeText(name),
-        code: toCode(code ?? name, 3),
-        description: description ? sanitizeText(description) : undefined
-      },
-      { new: true }
-    );
+    const project = (await ProjectModel.findById(req.params.id)) as ProjectDocWithMethods | null;
+    ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
 
-    if (!project) throw errors.notFound("Project không tồn tại");
-    return sendSuccess(res, project);
+    project!.name = sanitizeText(name);
+    project!.code = toCode(code ?? name, 3);
+    project!.description = description ? sanitizeText(description) : undefined;
+    await project!.save();
+
+    return sendSuccess(res, toProjectResponse(project as ProjectDocWithMethods, req.user!.id));
   })
 );
 
 router.patch(
   "/:id",
   requireAuth,
+  validate(projectIdParamSchema),
   asyncHandler(async (req, res) => {
     const { name } = req.body as { name?: string };
-    if (!name?.trim()) throw errors.validation("Tên không được để trống");
+    if (!name?.trim()) throw errors.validation("Ten khong duoc de trong");
 
-    const project = await ProjectModel.findOne({
-      _id: req.params.id,
-      userId: req.user!.id
-    });
-    if (!project) throw errors.notFound("Project không tồn tại");
+    const project = (await ProjectModel.findById(req.params.id)) as ProjectDocWithMethods | null;
+    ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
 
-    project.name = sanitizeText(name);
-    project.code = toCode(name, 3);
-    await project.save();
+    project!.name = sanitizeText(name);
+    project!.code = toCode(name, 3);
+    await project!.save();
 
-    return sendSuccess(res, project);
+    return sendSuccess(res, toProjectResponse(project as ProjectDocWithMethods, req.user!.id));
   })
 );
 
 router.delete(
   "/:id",
   requireAuth,
+  validate(projectIdParamSchema),
   asyncHandler(async (req, res) => {
-    const result = await ProjectModel.deleteOne({
-      _id: req.params.id,
-      userId: req.user!.id
-    });
-    if (result.deletedCount === 0) throw errors.notFound("Project không tồn tại");
+    const project = await ProjectModel.findById(req.params.id);
+    ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
+
+    await ProjectModel.deleteOne({ _id: req.params.id });
     return sendSuccess(res, { ok: true });
   })
 );

@@ -17,7 +17,7 @@
     </div>
 
     <!-- Nút tạo Project mới -->
-    <div class="border-b border-slate-100 px-4 py-3">
+    <div class="space-y-2 border-b border-slate-100 px-4 py-3">
       <button
         class="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-600 hover:bg-brand-100"
         @click="openCreateForm('project')"
@@ -26,6 +26,16 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
         </svg>
         Tạo Project
+      </button>
+      <button
+        v-if="canManageMembers"
+        class="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        @click="openMembersModal"
+      >
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v6m3-3h-6M5 20h6a2 2 0 002-2v-1a4 4 0 00-4-4H7a4 4 0 00-4 4v1a2 2 0 002 2zm9-10a4 4 0 100-8 4 4 0 000 8z" />
+        </svg>
+        Quan ly thanh vien
       </button>
     </div>
 
@@ -84,6 +94,14 @@
       @confirm="confirmDelete"
       @cancel="cancelDelete"
     />
+
+    <ProjectMembersModal
+      :show="showMembersModal"
+      :project-id="currentProjectId"
+      :project-name="currentProjectName"
+      @close="showMembersModal = false"
+      @updated="handleMembersUpdated"
+    />
   </aside>
 </template>
 
@@ -111,6 +129,33 @@ const createFormParentId = ref<string | undefined>(undefined);
 // Delete confirm state
 const showDeleteConfirm = ref(false);
 const deleteTarget = ref<{ nodeId: string; nodeType: string; nodeName: string } | null>(null);
+const showMembersModal = ref(false);
+const currentProjectId = computed(() => {
+  if (!selected.value) return "";
+  if (selected.value.type === "project") return selected.value.id;
+  return selected.value.projectId || "";
+});
+const currentProjectName = computed(() => {
+  if (!currentProjectId.value) return "";
+  const queue = [...tree.value];
+  while (queue.length > 0) {
+    const node = queue.shift();
+    if (!node) continue;
+    if (node.type === "project" && node.id === currentProjectId.value) {
+      return node.name;
+    }
+    if (node.children?.length) {
+      queue.push(...node.children);
+    }
+  }
+  if (selected.value?.type === "project" && selected.value.id === currentProjectId.value) {
+    return selected.value.name;
+  }
+  return "";
+});
+const canManageMembers = computed(() => {
+  return !!currentProjectId.value && selected.value?.projectRole === "admin";
+});
 
 const deleteConfirmTitle = computed(() => {
   if (!deleteTarget.value) return "";
@@ -130,8 +175,24 @@ const deleteConfirmMessage = computed(() => {
 });
 
 const handleSelect = (node: ProjectTreeNode) => {
-  selected.value = { id: node.id, name: node.name, type: node.type } as SelectedNode;
+  selected.value = {
+    id: node.id,
+    name: node.name,
+    type: node.type,
+    projectId: node.projectId,
+    projectRole: node.projectRole,
+    canManageStructure: node.canManageStructure
+  } as SelectedNode;
   emit("navigate");
+};
+
+const openMembersModal = () => {
+  if (!canManageMembers.value) return;
+  showMembersModal.value = true;
+};
+
+const handleMembersUpdated = async () => {
+  await fetchTree();
 };
 
 const handleAddChild = (payload: { parentId: string; parentType: string; childType: string }) => {

@@ -38,12 +38,17 @@
         @keydown.escape="cancelRename"
         @blur="confirmRename"
       />
-      <button v-else class="flex-1 truncate text-left" @click="handleSelect" @dblclick.stop="startRename">
+      <button
+        v-else
+        class="flex-1 truncate text-left"
+        @click="handleSelect"
+        @dblclick.stop="canRename ? startRename() : undefined"
+      >
         <span class="font-medium">{{ node.name }}</span>
       </button>
 
       <!-- Action menu -->
-      <div ref="menuRef" class="relative shrink-0">
+      <div v-if="hasMenuActions" ref="menuRef" class="relative shrink-0">
         <button
           class="flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-200 hover:text-slate-700"
           title="Thao tác"
@@ -69,7 +74,7 @@
             {{ addChildLabel }}
           </button>
           <button
-            v-if="node.type !== 'task'"
+            v-if="canRename"
             class="w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100"
             @click.stop="handleRenameFromMenu"
           >
@@ -97,6 +102,7 @@
             Nhân bản
           </button>
           <button
+            v-if="canDelete"
             class="w-full rounded px-2 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50"
             @click.stop="handleDelete"
           >
@@ -166,6 +172,7 @@ const toggleMenu = () => {
 };
 
 const startRename = () => {
+  if (!canRename.value) return;
   closeMenu();
   editName.value = node.value.name;
   editing.value = true;
@@ -207,15 +214,27 @@ const childType = computed(() => {
 });
 
 const canAddChild = computed(() => {
-  return ["project", "building", "floor", "discipline"].includes(node.value.type);
+  return node.value.canManageStructure && ["project", "building", "floor", "discipline"].includes(node.value.type);
 });
 
 const canReorder = computed(() => {
-  return ["project", "building", "floor", "discipline", "drawing"].includes(node.value.type);
+  return node.value.canManageStructure && ["project", "building", "floor", "discipline", "drawing"].includes(node.value.type);
 });
 
 const canDuplicate = computed(() => {
-  return ["project", "building", "floor", "discipline", "drawing"].includes(node.value.type);
+  return node.value.canManageStructure && ["project", "building", "floor", "discipline", "drawing"].includes(node.value.type);
+});
+
+const canRename = computed(() => {
+  return !!node.value.canManageStructure && node.value.type !== "task";
+});
+
+const canDelete = computed(() => {
+  return !!node.value.canManageStructure;
+});
+
+const hasMenuActions = computed(() => {
+  return canAddChild.value || canRename.value || canReorder.value || canDuplicate.value || canDelete.value;
 });
 
 const addChildLabel = computed(() => {
@@ -265,6 +284,7 @@ const handleDuplicate = () => {
 };
 
 const handleDelete = () => {
+  if (!canDelete.value) return;
   closeMenu();
   emit("delete", { nodeId: node.value.id, nodeType: node.value.type, nodeName: node.value.name });
 };

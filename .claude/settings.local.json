@@ -5,7 +5,14 @@
       "Bash(npm run build:*)",
       "Bash(npx nuxi typecheck:*)",
       "Bash(npx nuxi prepare:*)",
-      "Bash(npx nuxi build:*)"
+      "Bash(npx nuxi build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix _nuxt 500 errors: fix Dockerfile COPY order, add .dockerignore, add nginx mime types\n\n- Swap COPY order so clean npm ci node_modules overrides local ones\n- Remove broken symlink workaround for static files\n- Add .dockerignore to exclude node_modules, .nuxt, .output, .env from build context\n- Add include mime.types to nginx config\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(findstr:*)",
+      "Bash(npm install:*)",
+      "Bash(git -C d:appcongtruong status)"
     ]
   }
 }
