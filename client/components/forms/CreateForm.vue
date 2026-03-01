@@ -40,12 +40,124 @@
       <!-- Drawing -->
       <template v-else-if="type === 'drawing'">
         <div>
-          <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tên bản vẽ <span class="text-rose-400">*</span></label>
-          <input v-model="form.name" type="text" class="input" placeholder="VD: Mặt bằng điện tầng 1" required />
-        </div>
-        <div>
           <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">File PDF <span class="text-rose-400">*</span></label>
           <input type="file" class="input" accept="application/pdf" @change="handleFileChange" required />
+          <p class="mt-1 text-[11px] text-slate-500">
+            Chỉ cần tải file PDF. Hệ thống sẽ auto-scan metadata theo quy tắc trong huongdanv1.md.
+          </p>
+        </div>
+
+        <div
+          v-if="drawingAutoScanStatus !== 'idle' || uploadFile"
+          class="rounded-lg border p-3"
+          :class="requiresDrawingIntervention ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'"
+        >
+          <p class="text-xs font-semibold text-slate-700">Review &amp; Categorize</p>
+          <p class="mt-1 text-[11px]" :class="requiresDrawingIntervention ? 'text-rose-700' : 'text-slate-500'">
+            {{
+              requiresDrawingIntervention
+                ? drawingReviewMessage
+                : "Metadata đã được auto-fill. Bạn có thể lưu ngay hoặc chỉnh lại."
+            }}
+          </p>
+
+          <div v-if="drawingAutoScanStatus === 'scanning'" class="mt-2 text-xs text-brand-600">
+            Đang auto-scan metadata...
+          </div>
+
+          <div class="mt-3 grid gap-3 sm:grid-cols-2">
+            <div class="sm:col-span-2">
+              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tên bản vẽ <span class="text-rose-400">*</span></label>
+              <input
+                v-model="drawingDraftName"
+                type="text"
+                class="input"
+                placeholder="VD: 2201.CYSAPA-A79-AA-KS-BS-L1-M2"
+                @input="handleDrawingDraftNameInput"
+              />
+            </div>
+          </div>
+
+          <div v-if="requiresManualCoreTags" class="mt-3 rounded-lg border border-rose-200 bg-white p-3">
+            <p class="text-xs font-semibold uppercase tracking-wide text-rose-700">
+              OCR không đọc được tên chuẩn, cần chọn theo cấu trúc 7 trường cốt lõi
+            </p>
+            <p class="mt-1 text-[11px] text-slate-600">
+              Chọn từng trường theo format `[Project]-[Originator]-[Discipline]-[Building]-[Volume]-[Level]-[Type]`.
+            </p>
+
+            <div class="mt-3 grid gap-3 sm:grid-cols-2">
+              <div v-for="field in drawingCoreTagFields" :key="field">
+                <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                  {{ drawingCoreTagLabels[field] }}
+                  <span v-if="drawingRequiredManualFields.includes(field)" class="text-rose-400">*</span>
+                </label>
+                <select
+                  v-model="drawingManualTagSelections[field]"
+                  class="input"
+                  @change="handleDrawingCoreTagChange"
+                >
+                  <option value="">
+                    {{ drawingRequiredManualFields.includes(field) ? "Chọn mã bắt buộc" : "Tùy chọn" }}
+                  </option>
+                  <option
+                    v-for="option in getDrawingTagOptions(field)"
+                    :key="`${field}-${option.value}`"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <div class="mt-3 grid gap-3 sm:grid-cols-3">
+              <div v-for="field in drawingSupplementaryTagFields" :key="field">
+                <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                  {{ drawingSupplementaryTagLabels[field] }}
+                </label>
+                <select
+                  v-model="drawingSupplementaryTagSelections[field]"
+                  class="input"
+                  @change="handleDrawingSupplementaryTagChange"
+                >
+                  <option value="">Tùy chọn</option>
+                  <option
+                    v-for="option in getDrawingSupplementaryTagOptions(field)"
+                    :key="`${field}-${option.value}`"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <div class="mt-3">
+              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Tag bổ sung (tùy chọn)
+              </label>
+              <input
+                v-model="drawingManualTagInput"
+                type="text"
+                class="input"
+                placeholder="vd: revision:v-a, source:manual"
+                list="cms-tag-suggestions"
+              />
+            </div>
+
+            <p v-if="!hasAnyDrawingTagOptions" class="mt-2 text-[11px] text-rose-700">
+              Chưa đủ gợi ý mã chuyên ngành từ file. Bạn vẫn có thể nhập tag bổ sung theo dạng field:value.
+            </p>
+
+            <p v-if="manualDrawingName" class="mt-2 text-[11px] text-slate-600">
+              Tên bản vẽ ghép tự động: <span class="font-semibold text-slate-700">{{ manualDrawingName }}</span>
+            </p>
+          </div>
+
+          <p v-if="drawingValidationMessage" class="mt-2 text-xs text-rose-600">
+            {{ drawingValidationMessage }}
+          </p>
         </div>
       </template>
 
@@ -56,7 +168,7 @@
           <input v-model="form.pinName" type="text" class="input" placeholder="VD: Điểm đo 1" list="pin-suggestions" @change="onPinNameSelect" />
           <datalist id="pin-suggestions">
             <option v-for="s in pinSuggestions" :key="s.pinName" :value="s.pinName">
-              {{ s.pinCode }} · {{ s.roomName || '' }}
+              {{ s.pinCode }}
             </option>
           </datalist>
           <p v-if="pinSuggestions.length" class="mt-1 text-[11px] text-slate-400">Gợi ý từ các pin đã tạo trong dự án</p>
@@ -65,10 +177,10 @@
           <div>
             <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Trạng thái</label>
             <select v-model="form.status" class="input">
-              <option value="open">Mở</option>
-              <option value="in_progress">Đang xử lý</option>
-              <option value="blocked">Chặn</option>
-              <option value="done">Hoàn thành</option>
+              <option value="instruction">Hướng dẫn cho người vẽ</option>
+              <option value="rfi">Yêu cầu thêm thông tin (RFI)</option>
+              <option value="resolved">Đã hoàn thành</option>
+              <option value="approved">Đã được QA kiểm soát</option>
             </select>
           </div>
           <div>
@@ -83,56 +195,14 @@
           </div>
         </div>
         <div>
-          <div class="mb-1 flex items-center justify-between gap-2">
-            <label class="block text-xs font-medium uppercase tracking-wide text-slate-500">Phòng</label>
-            <input
-              ref="roomImportInput"
-              type="file"
-              accept=".xlsx,.xls"
-              class="hidden"
-              @change="handleRoomImport"
-            />
-            <div class="flex items-center gap-1">
-              <button
-                type="button"
-                class="rounded border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100"
-                @click="downloadRoomTemplate"
-              >
-                Tải mẫu
-              </button>
-              <button
-                type="button"
-                class="rounded border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60"
-                :disabled="importingRooms"
-                @click="triggerRoomImport"
-              >
-                {{ importingRooms ? "Đang import..." : "Import Excel" }}
-              </button>
-            </div>
-          </div>
-          <input
-            v-model="form.roomName"
-            type="text"
-            class="input"
-            placeholder="VD: Phòng khách"
-            list="room-suggestions"
-          />
-          <datalist id="room-suggestions">
-            <option
-              v-for="room in roomSuggestions"
-              :key="`${room.roomName}-${room.roomCode || ''}`"
-              :value="room.roomName"
-            >
-              {{ room.roomCode ? `${room.roomCode} · ${room.roomName}` : room.roomName }}
-            </option>
-          </datalist>
-          <p v-if="importingRooms" class="mt-1 text-[11px] text-brand-600">Đang xử lý file Excel phòng...</p>
-        </div>
-        <div>
           <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Mô tả</label>
           <textarea v-model="form.description" class="input" rows="2" placeholder="Mô tả chi tiết..."></textarea>
         </div>
       </template>
+
+      <datalist id="cms-tag-suggestions">
+        <option v-for="tag in cmsTagSuggestions" :key="tag" :value="tag" />
+      </datalist>
 
       <div v-if="errorMsg" class="rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-600">
         {{ errorMsg }}
@@ -149,7 +219,7 @@
         <button
           type="submit"
           class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
-          :disabled="submitting"
+          :disabled="submitting || (type === 'drawing' && !canSubmitDrawing)"
         >
           {{ submitting ? "Đang tạo..." : "Tạo mới" }}
         </button>
@@ -162,6 +232,7 @@
 import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import { useProjectTree } from "~/composables/api/useProjectTree";
+import { autoScanDrawingFile, type DrawingAutoScanResult } from "~/utils/drawing-auto-scan";
 
 export type CreateFormType = "project" | "building" | "floor" | "discipline" | "drawing" | "task";
 
@@ -185,21 +256,202 @@ const { fetchTree } = useProjectTree();
 const submitting = ref(false);
 const errorMsg = ref("");
 const uploadFile = ref<File | null>(null);
+const drawingAutoScanStatus = ref<"idle" | "scanning" | "matched" | "unmatched" | "error">("idle");
+const drawingAutoScanSource = ref<"filename" | "ocr" | "none">("none");
+const drawingAutoScanText = ref<string>("");
+const drawingParsed = ref<NonNullable<DrawingAutoScanResult["parsed"]> | null>(null);
+const drawingDraftName = ref("");
+const cmsTagSuggestions = ref<string[]>([]);
+
+type CmsTagNameSuggestionItem = {
+  scope:
+    | "project"
+    | "discipline"
+    | "originator"
+    | "building"
+    | "volume"
+    | "zone"
+    | "level"
+    | "room"
+    | "content_type"
+    | "issue_status"
+    | "file_type"
+    | "grid_axis"
+    | "custom";
+  code: string;
+  aliases?: string[];
+  label?: string;
+  description?: string;
+  isActive: boolean;
+};
+
+type DrawingCoreTagField = "project" | "unit" | "discipline" | "building" | "part" | "floor" | "fileType";
+type DrawingSupplementaryTagField = "room" | "issueStatus" | "gridAxis";
+type DrawingTagOption = { value: string; label: string };
+const drawingCoreTagFields = [
+  "project",
+  "unit",
+  "discipline",
+  "building",
+  "part",
+  "floor",
+  "fileType"
+] as const satisfies readonly DrawingCoreTagField[];
+const drawingCoreTagLabels: Record<DrawingCoreTagField, string> = {
+  project: "Mã dự án",
+  unit: "Đơn vị",
+  discipline: "Bộ môn",
+  building: "Tòa nhà",
+  part: "Phân khu",
+  floor: "Tầng",
+  fileType: "Loại bản vẽ"
+};
+const drawingSupplementaryTagFields = ["room", "issueStatus", "gridAxis"] as const satisfies readonly DrawingSupplementaryTagField[];
+const drawingSupplementaryTagLabels: Record<DrawingSupplementaryTagField, string> = {
+  room: "Phòng",
+  issueStatus: "Trạng thái phát hành",
+  gridAxis: "Trục tọa độ"
+};
+const drawingSupplementaryTagKeys: Record<DrawingSupplementaryTagField, string> = {
+  room: "room",
+  issueStatus: "issue-status",
+  gridAxis: "grid-axis"
+};
+const drawingDisciplineLabels: Record<string, string> = {
+  AA: "Kiến trúc",
+  AR: "Kiến trúc (alt)",
+  ES: "Kết cấu",
+  ST: "Kết cấu (alt)",
+  EM: "Cơ điện / Điều hòa",
+  ME: "Cơ điện / Điều hòa (alt)",
+  EL: "Điện",
+  EP: "Cấp thoát nước",
+  PL: "Cấp thoát nước (alt)",
+  EF: "PCCC",
+  FP: "PCCC (alt)",
+  HV: "Thông gió & Điều hòa",
+  IN: "Nội thất",
+  LA: "Cảnh quan",
+  LU: "Thông gió (DE)",
+  SW: "Thoát nước (DE)",
+  A: "Alias -> AA",
+  S: "Alias -> ES",
+  H: "Alias -> EM",
+  F: "Alias -> EF"
+};
+const drawingBuildingLabels: Record<string, string> = {
+  KS: "Khách sạn",
+  TM: "TTTM",
+  VP: "Văn phòng",
+  NT: "Chung cư"
+};
+const drawingPartLabels: Record<string, string> = {
+  BS: "Khối hầm",
+  PO: "Khối đế",
+  TY: "Tầng điển hình",
+  XO: "Toàn khu"
+};
+const drawingFloorLabels: Record<string, string> = {
+  B1: "Tầng hầm 1",
+  B2: "Tầng hầm 2",
+  B3: "Tầng hầm 3",
+  L1: "Tầng 1",
+  L2: "Tầng 2",
+  L3: "Tầng 3",
+  RF: "Tầng mái",
+  DG: "Tầng mái (Dachgeschoss)",
+  DA: "Tầng mái",
+  ZZ: "Toàn khu/chung",
+  UG: "Untergeschoss",
+  UG1: "Untergeschoss 1",
+  UG2: "Untergeschoss 2",
+  EG: "Erdgeschoss",
+  GF: "Ground Floor",
+  OG1: "Obergeschoss 1",
+  OG2: "Obergeschoss 2",
+  OG3: "Obergeschoss 3",
+  MZ: "Mezzanine",
+  MEZ: "Mezzanine"
+};
+const drawingFileTypeLabels: Record<string, string> = {
+  M2: "Bản vẽ 2D",
+  M3: "Mô hình 3D",
+  DR: "Drawing",
+  SH: "Schedule",
+  SM: "Schema",
+  DT: "Detail",
+  IS: "Isometric",
+  KP: "Connection detail"
+};
+const drawingDisciplineAliasMap: Record<string, string> = {
+  A: "AA",
+  S: "ES",
+  H: "EM",
+  F: "EF"
+};
+const drawingFieldBaseOptions: Record<DrawingCoreTagField, string[]> = {
+  project: [],
+  unit: [],
+  discipline: Object.keys(drawingDisciplineLabels),
+  building: Object.keys(drawingBuildingLabels),
+  part: Object.keys(drawingPartLabels),
+  floor: Object.keys(drawingFloorLabels),
+  fileType: Object.keys(drawingFileTypeLabels)
+};
+const drawingFieldCmsScopes: Record<DrawingCoreTagField, CmsTagNameSuggestionItem["scope"][]> = {
+  project: ["project"],
+  unit: ["originator"],
+  discipline: ["discipline"],
+  building: ["building"],
+  part: ["volume", "zone"],
+  floor: ["level"],
+  fileType: ["file_type", "content_type"]
+};
+const drawingSupplementaryCmsScopes: Record<DrawingSupplementaryTagField, CmsTagNameSuggestionItem["scope"][]> = {
+  room: ["room"],
+  issueStatus: ["issue_status"],
+  gridAxis: ["grid_axis"]
+};
+const drawingFilenameTokens = ref<string[]>([]);
+const drawingManualTagInput = ref("");
+const cmsTagItems = ref<CmsTagNameSuggestionItem[]>([]);
+const selectedProjectCode = ref("");
+const drawingDraftNameLockedByUser = ref(false);
+const drawingManualTagsLockedByUser = ref(false);
+const drawingAutoScanRequestId = ref(0);
+const drawingRequiredManualFields = [
+  "project",
+  "unit",
+  "discipline",
+  "building",
+  "part",
+  "floor",
+  "fileType"
+] as const satisfies readonly DrawingCoreTagField[];
+const drawingManualTagSelections = reactive<Record<DrawingCoreTagField, string>>({
+  project: "",
+  unit: "",
+  discipline: "",
+  building: "",
+  part: "",
+  floor: "",
+  fileType: ""
+});
+const drawingSupplementaryTagSelections = reactive<Record<DrawingSupplementaryTagField, string>>({
+  room: "",
+  issueStatus: "",
+  gridAxis: ""
+});
 
 // #13/#14 Pin suggestions for autofill
 type PinSuggestion = {
   pinName: string;
   pinCode: string;
-  roomName?: string;
   status?: string;
   category?: string;
   description?: string;
 };
 const pinSuggestions = ref<PinSuggestion[]>([]);
-type RoomSuggestion = { roomName: string; roomCode?: string };
-const roomSuggestions = ref<RoomSuggestion[]>([]);
-const roomImportInput = ref<HTMLInputElement | null>(null);
-const importingRooms = ref(false);
 
 const taskDraftKey = computed(() => `task-form-draft:${props.parentId || "unknown"}`);
 
@@ -211,71 +463,412 @@ const fetchPinSuggestions = async () => {
   } catch { pinSuggestions.value = []; }
 };
 
-const fetchRoomSuggestions = async () => {
-  if (props.type !== "task" || !props.parentId) {
-    roomSuggestions.value = [];
-    return;
-  }
+const normalizeDrawingTagToken = (value: string, allowDot = false) => {
+  const pattern = allowDot ? /[^A-Z0-9.]+/g : /[^A-Z0-9]+/g;
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(pattern, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+};
 
-  try {
-    const data = await api.get<RoomSuggestion[]>(`/rooms/suggestions?drawingId=${props.parentId}`);
-    roomSuggestions.value = data || [];
-  } catch {
-    roomSuggestions.value = [];
+const normalizeDrawingTagName = (value: string) => {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9.:-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+};
+
+const hasAlpha = (value: string) => /[A-Z]/.test(value);
+const hasDigit = (value: string) => /[0-9]/.test(value);
+
+const isLikelyProjectFieldValue = (value: string) => {
+  const normalized = value.trim().toUpperCase();
+  if (!normalized) return false;
+  const segments = normalized.split("-").filter(Boolean);
+  if (segments.length === 0) return false;
+  if (!hasDigit(segments[0])) return false;
+  return segments.every((segment) => /^[A-Z0-9.]+$/.test(segment));
+};
+
+const normalizeDrawingFieldValue = (field: DrawingCoreTagField, rawValue: string) => {
+  const base = field === "project"
+    ? rawValue
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9.-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+    : normalizeDrawingTagToken(rawValue, false);
+  if (!base) return "";
+  if (field === "discipline") {
+    return drawingDisciplineAliasMap[base] || base;
+  }
+  return base;
+};
+
+const isValidDrawingFieldValue = (field: DrawingCoreTagField, value: string) => {
+  if (!value) return false;
+  switch (field) {
+    case "project":
+      return isLikelyProjectFieldValue(value);
+    case "unit":
+      return /^[A-Z0-9]+$/.test(value) && hasAlpha(value);
+    case "discipline":
+      return /^[A-Z0-9]+$/.test(value) && hasAlpha(value);
+    case "building":
+      return /^[A-Z0-9]+$/.test(value) && hasAlpha(value);
+    case "part":
+      return /^[A-Z0-9]+$/.test(value) && hasAlpha(value);
+    case "floor":
+      if (/^(B\d+|L\d+|RF|DG|DA|UG\d*|EG|GF|OG\d+|MZ|MEZ|ZZ)$/i.test(value)) return true;
+      return /^[A-Z0-9]+$/.test(value) && (hasAlpha(value) || hasDigit(value));
+    case "fileType":
+      return /^[A-Z][A-Z0-9]*$/.test(value);
+    default:
+      return false;
   }
 };
 
-const triggerRoomImport = () => {
-  if (props.type !== "task") return;
-  roomImportInput.value?.click();
+const toUniqueTokens = (tokens: string[], allowDot = false) => {
+  const unique = new Set<string>();
+  tokens.forEach((rawToken) => {
+    const token = normalizeDrawingTagToken(rawToken, allowDot);
+    if (token) unique.add(token);
+  });
+  return Array.from(unique);
 };
 
-const downloadRoomTemplate = async () => {
-  if (!process.client) return;
-  try {
-    const XLSX = await import("xlsx");
-    const rows = [
-      { roomCode: "P101", roomName: "Phòng 101", building: "Toà A", floor: "Tầng 1" },
-      { roomCode: "P102", roomName: "Phòng 102", building: "Toà A", floor: "Tầng 1" },
-      { roomCode: "KHO-01", roomName: "Kho vật tư", building: "Toà B", floor: "Tầng 2" }
-    ];
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Rooms");
-    XLSX.writeFile(workbook, "mau-import-phong.xlsx");
-    toast.push("Đã tải file mẫu import phòng", "success");
-  } catch {
-    toast.push("Không thể tạo file mẫu", "error");
+const extractFilenameTokens = (filename: string) => {
+  const normalizedName = filename
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_\s]+/g, "-");
+  const tokens = normalizedName.split(/[^A-Za-z0-9.-]+/).flatMap((part) => part.split("-"));
+  return toUniqueTokens(tokens, false);
+};
+
+const extractOcrTokens = (text: string) => {
+  const tokens = text
+    .toUpperCase()
+    .replace(/[_\s]+/g, "-")
+    .split(/[^A-Z0-9.-]+/)
+    .flatMap((part) => part.split("-"));
+  return toUniqueTokens(tokens, false);
+};
+
+const getCmsTagItemsByScopes = (scopes: CmsTagNameSuggestionItem["scope"][]) => {
+  return cmsTagItems.value.filter((item) => item.isActive && scopes.includes(item.scope));
+};
+
+const getCmsTagItemsForField = (field: DrawingCoreTagField) => {
+  const scopes = drawingFieldCmsScopes[field] || [];
+  return getCmsTagItemsByScopes(scopes);
+};
+
+const getCmsTagCodesForField = (field: DrawingCoreTagField) => {
+  const codes: string[] = [];
+  getCmsTagItemsForField(field).forEach((item) => {
+    codes.push(item.code);
+    (item.aliases || []).forEach((alias) => codes.push(alias));
+  });
+  return toUniqueTokens(codes, field === "project");
+};
+
+const getCmsTagLabelForField = (field: DrawingCoreTagField, value: string) => {
+  const normalizedValue = normalizeDrawingFieldValue(field, value);
+  if (!normalizedValue) return "";
+
+  const matchedItem = getCmsTagItemsForField(field).find((item) => {
+    if (normalizeDrawingFieldValue(field, item.code) === normalizedValue) return true;
+    return (item.aliases || []).some((alias) => normalizeDrawingFieldValue(field, alias) === normalizedValue);
+  });
+
+  if (!matchedItem?.label) return "";
+  return `${normalizedValue} - ${matchedItem.label}`;
+};
+
+const getDrawingTagLabel = (field: DrawingCoreTagField, value: string) => {
+  const cmsLabel = getCmsTagLabelForField(field, value);
+  if (cmsLabel) return cmsLabel;
+
+  const maps: Record<DrawingCoreTagField, Record<string, string>> = {
+    project: {},
+    unit: {},
+    discipline: drawingDisciplineLabels,
+    building: drawingBuildingLabels,
+    part: drawingPartLabels,
+    floor: drawingFloorLabels,
+    fileType: drawingFileTypeLabels
+  };
+  const description = maps[field][value];
+  return description ? `${value} - ${description}` : value;
+};
+
+const collectDrawingFieldTokenCandidates = (field: DrawingCoreTagField, tokens: string[]) => {
+  const normalized: string[] = [];
+  tokens.forEach((token, index) => {
+    const value = normalizeDrawingFieldValue(field, token);
+    if (!value || !isValidDrawingFieldValue(field, value)) return;
+    if (field === "project" && !hasAlpha(value) && index > 0) return;
+    normalized.push(value);
+  });
+  return toUniqueTokens(normalized, field === "project");
+};
+
+const buildDrawingTagOptionsForField = (field: DrawingCoreTagField) => {
+  const values: string[] = [];
+  values.push(...drawingFieldBaseOptions[field]);
+  values.push(...getCmsTagCodesForField(field));
+
+  if (drawingParsed.value) {
+    const parsedValues: Partial<Record<DrawingCoreTagField, string | undefined>> = {
+      project: drawingParsed.value.projectCode,
+      unit: drawingParsed.value.unitCode,
+      discipline: drawingParsed.value.disciplineCode,
+      building: drawingParsed.value.buildingCode,
+      part: drawingParsed.value.buildingPartCode,
+      floor: drawingParsed.value.floorCode,
+      fileType: drawingParsed.value.fileTypeCode
+    };
+    const parsedFieldValue = parsedValues[field];
+    if (parsedFieldValue) values.push(parsedFieldValue);
   }
-};
 
-const handleRoomImport = async (event: Event) => {
-  if (!props.parentId) return;
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-
-  importingRooms.value = true;
-  try {
-    const formData = new FormData();
-    formData.append("drawingId", props.parentId);
-    formData.append("file", file);
-    const result = await api.upload<{ imported: number; skipped: number; totalRows: number }>("/rooms/import-excel", formData);
-    toast.push(`Import phòng: ${result.imported}/${result.totalRows} dòng`, "success");
-    await fetchRoomSuggestions();
-  } catch (err) {
-    toast.push((err as Error).message || "Lỗi import phòng", "error");
-  } finally {
-    importingRooms.value = false;
-    input.value = "";
+  if (field === "project") {
+    if (selectedProjectCode.value) {
+      values.push(selectedProjectCode.value);
+    }
+    const draftProject = drawingDraftName.value.split("-")[0] || "";
+    if (draftProject) values.push(draftProject);
   }
+
+  values.push(...collectDrawingFieldTokenCandidates(field, drawingFilenameTokens.value));
+
+  const normalizedValues = values
+    .map((value) => normalizeDrawingFieldValue(field, value))
+    .filter((value) => isValidDrawingFieldValue(field, value));
+
+  const uniqueValues = Array.from(new Set(normalizedValues));
+  return uniqueValues.map((value) => ({ value, label: getDrawingTagLabel(field, value) }));
 };
+
+const drawingTagOptionsByField = computed<Record<DrawingCoreTagField, DrawingTagOption[]>>(() => {
+  return {
+    project: buildDrawingTagOptionsForField("project"),
+    unit: buildDrawingTagOptionsForField("unit"),
+    discipline: buildDrawingTagOptionsForField("discipline"),
+    building: buildDrawingTagOptionsForField("building"),
+    part: buildDrawingTagOptionsForField("part"),
+    floor: buildDrawingTagOptionsForField("floor"),
+    fileType: buildDrawingTagOptionsForField("fileType")
+  };
+});
+
+const getDrawingTagOptions = (field: DrawingCoreTagField): DrawingTagOption[] => {
+  return drawingTagOptionsByField.value[field] || [];
+};
+
+const getDrawingSupplementaryTagOptions = (field: DrawingSupplementaryTagField): DrawingTagOption[] => {
+  const scopes = drawingSupplementaryCmsScopes[field] || [];
+  const items = getCmsTagItemsByScopes(scopes);
+  const values: string[] = [];
+  items.forEach((item) => {
+    values.push(item.code);
+    (item.aliases || []).forEach((alias) => values.push(alias));
+  });
+
+  const normalizedValues = toUniqueTokens(values, false);
+  return normalizedValues.map((value) => {
+    const matched = items.find((item) => {
+      const normalizedCode = normalizeDrawingTagToken(item.code, false);
+      if (normalizedCode === value) return true;
+      return (item.aliases || []).some((alias) => normalizeDrawingTagToken(alias, false) === value);
+    });
+
+    if (matched?.label) {
+      return { value, label: `${value} - ${matched.label}` };
+    }
+    return { value, label: value };
+  });
+};
+
+const hasAnyDrawingTagOptions = computed(() => {
+  return (
+    drawingCoreTagFields.some((field) => getDrawingTagOptions(field).length > 0) ||
+    drawingSupplementaryTagFields.some((field) => getDrawingSupplementaryTagOptions(field).length > 0)
+  );
+});
+
+const resetDrawingManualTags = () => {
+  drawingFilenameTokens.value = [];
+  drawingManualTagInput.value = "";
+  drawingCoreTagFields.forEach((field) => {
+    drawingManualTagSelections[field] = "";
+  });
+  drawingSupplementaryTagFields.forEach((field) => {
+    drawingSupplementaryTagSelections[field] = "";
+  });
+};
+
+const handleDrawingDraftNameInput = () => {
+  drawingDraftNameLockedByUser.value = true;
+};
+
+const handleDrawingCoreTagChange = () => {
+  drawingManualTagsLockedByUser.value = true;
+};
+
+const handleDrawingSupplementaryTagChange = () => {
+  drawingManualTagsLockedByUser.value = true;
+};
+
+const applyDrawingManualTagsFromTokens = (tokens: string[]) => {
+  drawingFilenameTokens.value = toUniqueTokens(tokens, false);
+  drawingCoreTagFields.forEach((field) => {
+    const candidates = collectDrawingFieldTokenCandidates(field, drawingFilenameTokens.value);
+    drawingManualTagSelections[field] = candidates[0] || "";
+  });
+};
+
+const fillMissingDrawingManualTagsFromTokens = (tokens: string[]) => {
+  const normalizedTokens = toUniqueTokens(tokens, false);
+  drawingCoreTagFields.forEach((field) => {
+    if (drawingManualTagSelections[field]) return;
+    const candidates = collectDrawingFieldTokenCandidates(field, normalizedTokens);
+    if (candidates.length > 0) {
+      drawingManualTagSelections[field] = candidates[0];
+    }
+  });
+};
+
+const applyDrawingManualTagsFromParsed = (parsed: NonNullable<DrawingAutoScanResult["parsed"]>) => {
+  const parsedValues: Partial<Record<DrawingCoreTagField, string | undefined>> = {
+    project: parsed.projectCode,
+    unit: parsed.unitCode,
+    discipline: parsed.disciplineCode,
+    building: parsed.buildingCode,
+    part: parsed.buildingPartCode,
+    floor: parsed.floorCode,
+    fileType: parsed.fileTypeCode
+  };
+  drawingCoreTagFields.forEach((field) => {
+    const rawValue = parsedValues[field] || "";
+    const normalizedValue = normalizeDrawingFieldValue(field, rawValue);
+    drawingManualTagSelections[field] = normalizedValue && isValidDrawingFieldValue(field, normalizedValue)
+      ? normalizedValue
+      : "";
+  });
+};
+
+const buildDrawingNameFromManualSelections = () => {
+  const requiredSegments = drawingRequiredManualFields.map((field) => {
+    const normalized = normalizeDrawingFieldValue(field, drawingManualTagSelections[field]);
+    return isValidDrawingFieldValue(field, normalized) ? normalized : "";
+  });
+
+  if (requiredSegments.some((segment) => !segment)) {
+    return "";
+  }
+
+  return requiredSegments.join("-");
+};
+
+const manualDrawingName = computed(() => {
+  return buildDrawingNameFromManualSelections();
+});
+
+const buildManualDrawingTagNames = () => {
+  const tags: string[] = [];
+  drawingCoreTagFields.forEach((field) => {
+    const rawValue = drawingManualTagSelections[field];
+    const normalizedFieldValue = normalizeDrawingFieldValue(field, rawValue);
+    if (!normalizedFieldValue || !isValidDrawingFieldValue(field, normalizedFieldValue)) return;
+    const normalizedValue = normalizeDrawingTagName(normalizedFieldValue);
+    const normalizedField = normalizeDrawingTagName(field);
+    tags.push(`${normalizedField}:${normalizedValue}`);
+  });
+
+  drawingSupplementaryTagFields.forEach((field) => {
+    const rawValue = drawingSupplementaryTagSelections[field];
+    const normalizedValue = normalizeDrawingTagToken(rawValue, false);
+    if (!normalizedValue) return;
+    const fieldKey = drawingSupplementaryTagKeys[field];
+    tags.push(`${fieldKey}:${normalizeDrawingTagName(normalizedValue)}`);
+  });
+
+  parseTagNames(drawingManualTagInput.value).forEach((rawTag) => {
+    const normalizedTag = normalizeDrawingTagName(rawTag);
+    if (!normalizedTag) return;
+    tags.push(normalizedTag);
+  });
+
+  return Array.from(new Set(tags));
+};
+
+const requiresManualCoreTags = computed(() => {
+  if (props.type !== "drawing" || !uploadFile.value) return false;
+  return !drawingParsed.value;
+});
+
+const missingManualCoreTagFields = computed(() => {
+  if (!requiresManualCoreTags.value) return [];
+  return drawingRequiredManualFields.filter((field) => !drawingManualTagSelections[field]);
+});
+
+const missingManualCoreTagLabels = computed(() => {
+  return missingManualCoreTagFields.value.map((field) => drawingCoreTagLabels[field]);
+});
+
+const drawingReviewMessage = computed(() => {
+  if (requiresManualCoreTags.value) {
+    return "OCR chưa đọc được tên chuẩn. Bắt buộc chọn đủ 7 trường lõi để hệ thống tự ghép Tên bản vẽ.";
+  }
+  return "Metadata đã được nhận diện từ file PDF. Bạn có thể lưu ngay hoặc chỉnh lại Tên bản vẽ.";
+});
+
+const drawingValidationMessage = computed(() => {
+  if (props.type !== "drawing" || !uploadFile.value) return "";
+  const hasDraftName = !!drawingDraftName.value.trim();
+  if (hasDraftName) {
+    const normalizedDraftSegments = drawingDraftName.value
+      .trim()
+      .replace(/[_\s]+/g, "-")
+      .split("-")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    const minSegments = requiresManualCoreTags.value ? 7 : 6;
+    if (normalizedDraftSegments.length < minSegments) {
+      if (minSegments === 7) {
+        return "Tên bản vẽ chưa đúng cấu trúc. Cần đủ 7 trường: Project-Originator-Discipline-Building-Volume-Level-Type.";
+      }
+      return "Tên bản vẽ chưa đúng cấu trúc. Cần tối thiểu 6 trường: Project-Originator-Discipline-Building-Volume-Level.";
+    }
+    return "";
+  }
+  if (requiresManualCoreTags.value && missingManualCoreTagLabels.value.length > 0) {
+    return `Thiếu Tên bản vẽ. Vui lòng chọn mã cho: ${missingManualCoreTagLabels.value.join(", ")} hoặc nhập tên chuẩn thủ công.`;
+  }
+  if (manualDrawingName.value) return "";
+  return "Thiếu Tên bản vẽ. Nhập tên theo chuẩn hoặc chọn đủ 7 trường lõi để hệ thống ghép tự động.";
+});
+
+const requiresDrawingIntervention = computed(() => {
+  if (props.type !== "drawing" || !uploadFile.value) return false;
+  return !!drawingValidationMessage.value;
+});
+
+const canSubmitDrawing = computed(() => {
+  if (props.type !== "drawing") return true;
+  return !!uploadFile.value && !drawingValidationMessage.value;
+});
 
 const saveTaskDraft = () => {
   if (!process.client || props.type !== "task") return;
   const draft = {
     pinName: form.pinName,
-    roomName: form.roomName,
     description: form.description,
     status: form.status,
     category: form.category
@@ -309,9 +902,8 @@ const restoreTaskDraft = () => {
   try {
     const draft = JSON.parse(raw) as Partial<typeof form>;
     form.pinName = draft.pinName || "";
-    form.roomName = draft.roomName || "";
     form.description = draft.description || "";
-    form.status = (draft.status as string) || "open";
+    form.status = (draft.status as string) || "instruction";
     form.category = (draft.category as string) || "quality";
   } catch {
     // Ignore malformed draft
@@ -322,10 +914,68 @@ const onPinNameSelect = () => {
   // Auto-fill full form from matching suggestion
   const match = pinSuggestions.value.find((s) => s.pinName === form.pinName);
   if (match) {
-    if (match.roomName && !form.roomName) form.roomName = match.roomName;
     if (match.status) form.status = match.status;
     if (match.category) form.category = match.category;
     if (match.description && !form.description) form.description = match.description;
+  }
+};
+
+const parseTagNames = (value: string) => {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => item.toLowerCase())
+    .filter((item, index, arr) => arr.indexOf(item) === index);
+};
+
+const scopeToTagField = (scope: CmsTagNameSuggestionItem["scope"]) => {
+  if (scope === "file_type") return "filetype";
+  return scope;
+};
+
+const fetchCmsTagSuggestions = async () => {
+  try {
+    const tagItems = await api.get<CmsTagNameSuggestionItem[]>("/cms/tag-names?active=1");
+    cmsTagItems.value = tagItems || [];
+    const suggestions = new Set<string>();
+    (cmsTagItems.value || []).forEach((item) => {
+      if (!item?.isActive) return;
+      const field = scopeToTagField(item.scope);
+      const primaryCode = String(item.code || "").trim().toLowerCase();
+      if (primaryCode) {
+        suggestions.add(`${field}:${primaryCode}`);
+        suggestions.add(primaryCode);
+      }
+      (item.aliases || []).forEach((alias) => {
+        const normalizedAlias = String(alias || "").trim().toLowerCase();
+        if (!normalizedAlias) return;
+        suggestions.add(`${field}:${normalizedAlias}`);
+        suggestions.add(normalizedAlias);
+      });
+    });
+    cmsTagSuggestions.value = Array.from(suggestions);
+  } catch {
+    cmsTagItems.value = [];
+    cmsTagSuggestions.value = [];
+  }
+};
+
+const fetchDrawingProjectCode = async () => {
+  if (props.type !== "drawing" || !props.parentId) {
+    selectedProjectCode.value = "";
+    return;
+  }
+
+  try {
+    const project = await api.get<{ code?: string }>(`/projects/${props.parentId}`);
+    const normalizedProjectCode = normalizeDrawingFieldValue("project", String(project?.code || ""));
+    selectedProjectCode.value = normalizedProjectCode;
+    if (!drawingManualTagSelections.project && normalizedProjectCode) {
+      drawingManualTagSelections.project = normalizedProjectCode;
+    }
+  } catch {
+    selectedProjectCode.value = "";
   }
 };
 
@@ -333,8 +983,7 @@ const form = reactive({
   name: "",
   description: "",
   pinName: "",
-  roomName: "",
-  status: "open",
+  status: "instruction",
   category: "quality",
   pinX: 0.5,
   pinY: 0.5
@@ -352,10 +1001,65 @@ const title = computed(() => {
   return titles[props.type];
 });
 
-const handleFileChange = (e: Event) => {
+const handleFileChange = async (e: Event) => {
   const input = e.target as HTMLInputElement;
-  if (input.files && input.files[0]) {
-    uploadFile.value = input.files[0];
+  if (!input.files || !input.files[0]) return;
+
+  const requestId = drawingAutoScanRequestId.value + 1;
+  drawingAutoScanRequestId.value = requestId;
+  const selectedFile = input.files[0];
+  const extractedTokens = extractFilenameTokens(selectedFile.name);
+  uploadFile.value = selectedFile;
+  drawingAutoScanStatus.value = "scanning";
+  drawingAutoScanSource.value = "none";
+  drawingAutoScanText.value = "";
+  drawingParsed.value = null;
+  drawingDraftName.value = "";
+  drawingDraftNameLockedByUser.value = false;
+  drawingManualTagsLockedByUser.value = false;
+  resetDrawingManualTags();
+  applyDrawingManualTagsFromTokens(extractedTokens);
+
+  try {
+    const result = await autoScanDrawingFile(selectedFile);
+    if (requestId !== drawingAutoScanRequestId.value) {
+      return;
+    }
+    drawingAutoScanSource.value = result.source;
+    drawingAutoScanText.value = result.ocrText || "";
+    drawingParsed.value = result.parsed || null;
+    const ocrTokens = extractOcrTokens(drawingAutoScanText.value);
+    drawingFilenameTokens.value = toUniqueTokens([...drawingFilenameTokens.value, ...ocrTokens], false);
+    if (!drawingManualTagsLockedByUser.value) {
+      fillMissingDrawingManualTagsFromTokens(drawingFilenameTokens.value);
+    }
+
+    if (result.parsed) {
+      if (!drawingDraftNameLockedByUser.value) {
+        drawingDraftName.value = result.parsed.suggestedName || result.parsed.drawingCode || "";
+      }
+      if (!drawingManualTagsLockedByUser.value) {
+        applyDrawingManualTagsFromParsed(result.parsed);
+      }
+    } else if (!drawingDraftName.value && extractedTokens.length > 0 && !drawingDraftNameLockedByUser.value) {
+      drawingDraftName.value = extractedTokens.slice(0, 7).join("-");
+    }
+
+    drawingAutoScanStatus.value = result.matched ? "matched" : "unmatched";
+
+    if (result.matched) {
+      toast.push("Auto-scan đã nhận diện metadata bản vẽ", "success");
+    } else if (result.error) {
+      toast.push("Auto-scan không lấy được metadata: " + result.error, "info");
+    } else {
+      toast.push("Không đọc được metadata từ file. Vui lòng chọn các trường lõi để ghép Tên bản vẽ.", "info");
+    }
+  } catch {
+    if (requestId !== drawingAutoScanRequestId.value) {
+      return;
+    }
+    drawingAutoScanStatus.value = "error";
+    toast.push("Auto-scan thất bại. Vui lòng chọn các trường lõi để nhập Tên bản vẽ thủ công.", "error");
   }
 };
 
@@ -363,12 +1067,21 @@ const resetForm = () => {
   form.name = "";
   form.description = "";
   form.pinName = "";
-  form.roomName = "";
-  form.status = "open";
+  form.status = "instruction";
   form.category = "quality";
   form.pinX = props.initialPinX ?? 0.5;
   form.pinY = props.initialPinY ?? 0.5;
+
   uploadFile.value = null;
+  drawingAutoScanStatus.value = "idle";
+  drawingAutoScanSource.value = "none";
+  drawingAutoScanText.value = "";
+  drawingParsed.value = null;
+  drawingDraftName.value = "";
+  drawingDraftNameLockedByUser.value = false;
+  drawingManualTagsLockedByUser.value = false;
+  resetDrawingManualTags();
+
   errorMsg.value = "";
 };
 
@@ -414,9 +1127,29 @@ const handleSubmit = async () => {
           errorMsg.value = "Vui lòng chọn file PDF";
           return;
         }
+        if (!props.parentId) {
+          errorMsg.value = "Cần chọn project để tải bản vẽ";
+          return;
+        }
+        if (drawingValidationMessage.value) {
+          errorMsg.value = drawingValidationMessage.value;
+          return;
+        }
+
+        const resolvedDrawingName = drawingDraftName.value.trim() || manualDrawingName.value;
+        const normalizedDrawingName = resolvedDrawingName.trim().toUpperCase();
+
         const formData = new FormData();
-        formData.append("disciplineId", props.parentId || "");
-        formData.append("name", form.name);
+        formData.append("projectId", props.parentId);
+        formData.append("drawingCode", normalizedDrawingName);
+        formData.append("name", normalizedDrawingName);
+        if (drawingAutoScanText.value) {
+          formData.append("ocrText", drawingAutoScanText.value);
+        }
+        const manualTagNames = buildManualDrawingTagNames();
+        if (manualTagNames.length > 0) {
+          formData.append("tagNames", JSON.stringify(manualTagNames));
+        }
         formData.append("file", uploadFile.value);
         result = await api.upload("/drawings", formData);
         break;
@@ -426,7 +1159,6 @@ const handleSubmit = async () => {
         taskPayload = {
           drawingId: props.parentId,
           pinName: form.pinName || undefined,
-          roomName: form.roomName || undefined,
           description: form.description || undefined,
           status: form.status,
           category: form.category,
@@ -446,7 +1178,7 @@ const handleSubmit = async () => {
 
     const queued = isOfflineQueuedResponse(result);
     if (queued) {
-      toast.push(`Da luu tam ${props.type}, se dong bo khi co mang`, "info");
+      toast.push(`Đã lưu tạm ${props.type}, sẽ đồng bộ khi có mạng`, "info");
     } else {
       toast.push(`Tạo ${props.type} thành công`, "success");
     }
@@ -467,23 +1199,39 @@ const handleSubmit = async () => {
 };
 
 // Reset form khi đóng modal, áp dụng toạ độ khi mở
-watch(() => props.show, (newVal) => {
+watch(() => props.show, async (newVal) => {
   if (!newVal) {
     resetForm();
-  } else if (props.type === "task") {
-    form.pinX = props.initialPinX ?? 0.5;
-    form.pinY = props.initialPinY ?? 0.5;
-    fetchPinSuggestions();
-    fetchRoomSuggestions();
-    restoreTaskDraft();
+  } else {
+    if (props.type === "task" || props.type === "drawing") {
+      await fetchCmsTagSuggestions();
+    }
+    if (props.type === "drawing") {
+      await fetchDrawingProjectCode();
+    }
+    if (props.type === "task") {
+      form.pinX = props.initialPinX ?? 0.5;
+      form.pinY = props.initialPinY ?? 0.5;
+      fetchPinSuggestions();
+      restoreTaskDraft();
+    }
   }
 });
 
 watch(
-  () => [form.pinName, form.roomName, form.description, form.status, form.category, props.show],
+  () => [form.pinName, form.description, form.status, form.category, props.show],
   () => {
     if (!props.show || props.type !== "task") return;
     saveTaskDraft();
   }
 );
+
+watch(
+  () => [props.parentId, props.show, props.type] as const,
+  async ([parentId, isVisible, formType]) => {
+    if (!isVisible || formType !== "drawing" || !parentId) return;
+    await fetchDrawingProjectCode();
+  }
+);
 </script>
+

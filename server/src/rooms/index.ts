@@ -93,6 +93,13 @@ router.post(
       throw err;
     }
 
+    const fallbackBuildingId = drawing.buildingId?.toString();
+    const fallbackFloorId = drawing.floorId?.toString();
+    if (!fallbackBuildingId || !fallbackFloorId) {
+      cleanupUpload(req.file);
+      throw errors.validation("Drawing chua co thong tin toa nha/tang de import phong");
+    }
+
     let rows: Array<Record<string, unknown>> = [];
     try {
       const workbook = req.file.buffer
@@ -110,7 +117,7 @@ router.post(
     const floorCache = new Map<string, { id: string; buildingId: string }>();
 
     const resolveBuildingByCodeOrName = async (value?: string) => {
-      if (!value) return drawing.buildingId.toString();
+      if (!value) return fallbackBuildingId;
       const key = value.toLocaleLowerCase("vi");
       if (buildingCache.has(key)) return buildingCache.get(key) as string;
 
@@ -119,14 +126,14 @@ router.post(
         $or: [{ code: value.toUpperCase() }, { name: value }]
       }).select("_id");
 
-      const resolved = building?._id.toString() ?? drawing.buildingId.toString();
+      const resolved = building?._id.toString() ?? fallbackBuildingId;
       buildingCache.set(key, resolved);
       return resolved;
     };
 
     const resolveFloorByCodeOrName = async (buildingId: string, value?: string) => {
       if (!value) {
-        return { id: drawing.floorId.toString(), buildingId: drawing.buildingId.toString() };
+        return { id: fallbackFloorId, buildingId: fallbackBuildingId };
       }
 
       const key = `${buildingId}:${value.toLocaleLowerCase("vi")}`;
@@ -140,7 +147,7 @@ router.post(
 
       const resolved = floor
         ? { id: floor._id.toString(), buildingId: floor.buildingId.toString() }
-        : { id: drawing.floorId.toString(), buildingId: drawing.buildingId.toString() };
+        : { id: fallbackFloorId, buildingId: fallbackBuildingId };
       floorCache.set(key, resolved);
       return resolved;
     };
@@ -223,10 +230,14 @@ router.get(
     ensureProjectRole(await ProjectModel.findById(drawing.projectId), req.user!.id, "technician", "Khong co quyen");
 
     const roomFilter: Record<string, unknown> = {
-      projectId: drawing.projectId,
-      buildingId: drawing.buildingId,
-      floorId: drawing.floorId
+      projectId: drawing.projectId
     };
+    if (drawing.buildingId && drawing.floorId) {
+      roomFilter.buildingId = drawing.buildingId;
+      roomFilter.floorId = drawing.floorId;
+    } else {
+      roomFilter.drawingId = drawing._id;
+    }
 
     if (q) {
       const pattern = new RegExp(escapeRegExp(q), "i");
@@ -245,8 +256,9 @@ router.get(
     const taskRooms = await TaskModel.find(
       {
         projectId: drawing.projectId,
-        buildingId: drawing.buildingId,
-        floorId: drawing.floorId,
+        ...(drawing.buildingId && drawing.floorId
+          ? { buildingId: drawing.buildingId, floorId: drawing.floorId }
+          : { drawingId: drawing._id }),
         roomName: { $exists: true, $ne: "" }
       },
       { roomName: 1, _id: 0 }

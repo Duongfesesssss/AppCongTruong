@@ -14,7 +14,7 @@
           class="rounded border border-current px-2 py-0.5 text-[11px] font-medium hover:bg-white/20"
           @click="handleSync"
         >
-          Dong bo ngay
+          Đồng bộ ngay
         </button>
       </div>
     </div>
@@ -37,24 +37,24 @@ const showBanner = computed(
 
 const title = computed(() => {
   if (!isOnline.value) return "Offline";
-  if (isSyncing.value) return "Dang dong bo";
-  if (lastSyncError.value) return "Dong bo tam dung";
-  if (pendingCount.value > 0) return "Cho dong bo";
+  if (isSyncing.value) return "Đang đồng bộ";
+  if (lastSyncError.value) return "Đồng bộ tạm dừng";
+  if (pendingCount.value > 0) return "Chờ đồng bộ";
   return "";
 });
 
 const description = computed(() => {
   if (!isOnline.value) {
-    return `Khong co mang. ${pendingCount.value} thao tac se duoc luu tam.`;
+    return `Không có mạng. ${pendingCount.value} thao tác sẽ được lưu tạm.`;
   }
   if (isSyncing.value) {
-    return `Dang dong bo ${pendingCount.value} thao tac...`;
+    return `Đang đồng bộ ${pendingCount.value} thao tác...`;
   }
   if (lastSyncError.value) {
     return lastSyncError.value;
   }
   if (pendingCount.value > 0) {
-    return `${pendingCount.value} thao tac dang cho dong bo.`;
+    return `${pendingCount.value} thao tác đang chờ đồng bộ.`;
   }
   return "";
 });

@@ -1,5 +1,5 @@
 <template>
-  <div class="relative h-full rounded-2xl border border-slate-200 bg-white shadow-sm">
+  <div id="plan-view-root" class="relative h-full rounded-2xl border border-slate-200 bg-white shadow-sm">
     <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 sm:px-4 sm:py-3">
       <div class="min-w-0">
         <p class="text-[10px] uppercase tracking-widest text-slate-400 sm:text-xs">Plan View</p>
@@ -43,11 +43,12 @@
     <div
       ref="viewportRef"
       class="relative h-[55vh] overflow-hidden bg-slate-50 sm:h-[70vh]"
-      style="touch-action: pan-y pinch-zoom"
+      style="touch-action: none"
       @wheel="handleWheel"
       @pointerdown="handleViewportPointerDown"
       @pointermove="handlePointerMove"
       @pointerup="handlePointerUp"
+      @pointercancel="handlePointerUp"
       @pointerleave="handlePointerUp"
     >
       <div v-if="loading" class="flex h-full items-center justify-center text-sm text-slate-500">
@@ -130,6 +131,8 @@
 </template>
 
 <script setup lang="ts">
+import { useDeepLinkFocus } from "~/composables/state/useDeepLinkFocus";
+
 type Drawing = { _id?: string; id?: string; name?: string } | null;
 
 type Pin = {
@@ -151,6 +154,9 @@ type Zone = {
 
 const props = defineProps<{
   drawing: Drawing;
+  compareDrawingId?: string;
+  compareBlendMode?: "difference" | "multiply" | "normal";
+  compareOpacity?: number;
   pins: Pin[];
   zones: Zone[];
   loading: boolean;
@@ -165,6 +171,7 @@ const emit = defineEmits<{
   (e: "zone-click", zone: Zone): void;
   (e: "place-pin", coords: { pinX: number; pinY: number }): void;
   (e: "pin-move", data: { pinId: string; pinX: number; pinY: number }): void;
+  (e: "view-state", state: { drawingId: string; centerX: number; centerY: number; zoom: number }): void;
   (e: "cancel-place"): void;
 }>();
 
@@ -187,6 +194,7 @@ const contentRef = ref<HTMLElement | null>(null);
 const pdfContainerRef = ref<HTMLElement | null>(null);
 const pdfRendering = ref(false);
 const pdfHasContent = ref(false);
+const { pending: pendingDeepLink, clearDeepLinkFocus } = useDeepLinkFocus();
 
 const zoom = ref(1);
 const offset = reactive({ x: 0, y: 0 });
@@ -194,6 +202,10 @@ const panning = ref(false);
 const panStart = reactive({ x: 0, y: 0 });
 const panOrigin = reactive({ x: 0, y: 0 });
 const didPan = ref(false);
+const pinching = ref(false);
+const activeTouchPointers = new Map<number, { x: number; y: number }>();
+let pinchStartDistance = 0;
+let pinchStartZoom = 1;
 
 const draggingPinId = ref<string | null>(null);
 const draggingPinPos = ref<{ x: number; y: number } | null>(null);
@@ -208,6 +220,12 @@ const fileUrl = computed(() => {
   if (!props.drawing) return "";
   const id = props.drawing._id || props.drawing.id;
   const base = `${useRuntimeConfig().public.apiBase}/drawings/${id}/file`;
+  return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
+});
+
+const compareFileUrl = computed(() => {
+  if (!props.compareDrawingId) return "";
+  const base = `${useRuntimeConfig().public.apiBase}/drawings/${props.compareDrawingId}/file`;
   return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
 });
 
@@ -247,6 +265,26 @@ const normalizedCoords = (event: PointerEvent | MouseEvent): { x: number; y: num
     x: clamp((event.clientX - rect.left) / rect.width),
     y: clamp((event.clientY - rect.top) / rect.height)
   };
+};
+
+const getCurrentDrawingId = () => props.drawing?._id || props.drawing?.id || "";
+
+const emitViewState = () => {
+  const drawingId = getCurrentDrawingId();
+  if (!drawingId) return;
+
+  const viewport = viewportRef.value;
+  const content = contentRef.value;
+  if (!viewport || !content || content.offsetWidth === 0 || content.offsetHeight === 0) return;
+
+  const centerX = clamp((viewport.clientWidth / 2 - offset.x) / zoom.value / content.offsetWidth);
+  const centerY = clamp((viewport.clientHeight / 2 - offset.y) / zoom.value / content.offsetHeight);
+  emit("view-state", {
+    drawingId,
+    centerX,
+    centerY,
+    zoom: zoom.value
+  });
 };
 
 const clampOffsetToViewport = () => {
@@ -303,6 +341,7 @@ const applyZoom = (targetZoom: number, anchorClient?: { x: number; y: number }) 
   offset.y = viewportY - worldY * nextZoom;
   clampOffsetToViewport();
   scheduleDetailRender(SHARPEN_DEBOUNCE_MS);
+  emitViewState();
 };
 
 const zoomIn = () => {
@@ -319,6 +358,7 @@ const resetView = () => {
   offset.y = 0;
   nextTick(() => {
     clampOffsetToViewport();
+    emitViewState();
   });
   scheduleDetailRender(0);
 };
@@ -331,8 +371,44 @@ const handleWheel = (event: WheelEvent) => {
   applyZoom(zoom.value * factor, { x: event.clientX, y: event.clientY });
 };
 
+const getPinchPoints = () => {
+  const points = Array.from(activeTouchPointers.values());
+  if (points.length < 2) return null;
+  return [points[0], points[1]] as const;
+};
+
+const getPinchDistance = () => {
+  const points = getPinchPoints();
+  if (!points) return 0;
+  return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+};
+
+const getPinchCenter = () => {
+  const points = getPinchPoints();
+  if (!points) return null;
+  return {
+    x: (points[0].x + points[1].x) / 2,
+    y: (points[0].y + points[1].y) / 2
+  };
+};
+
+const beginPinch = () => {
+  const distance = getPinchDistance();
+  if (distance <= 0) return;
+  pinchStartDistance = distance;
+  pinchStartZoom = zoom.value;
+  pinching.value = true;
+  panning.value = false;
+  didPan.value = true;
+};
+
+const updateTouchPointer = (event: PointerEvent) => {
+  if (event.pointerType !== "touch") return;
+  activeTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+};
+
 const startPan = (event: PointerEvent) => {
-  if (draggingPinId.value) return;
+  if (draggingPinId.value || pinching.value) return;
   didPan.value = false;
   panning.value = true;
   panStart.x = event.clientX;
@@ -342,14 +418,40 @@ const startPan = (event: PointerEvent) => {
 };
 
 const handleViewportPointerDown = (event: PointerEvent) => {
-  if (event.button !== 0) return;
+  if (event.pointerType !== "touch" && event.button !== 0) return;
   const target = event.target as HTMLElement;
+
+  updateTouchPointer(event);
+  if (event.pointerType === "touch" && activeTouchPointers.size >= 2) {
+    beginPinch();
+    event.preventDefault();
+    return;
+  }
+
   if (props.placingPin) return;
   if (target.closest(".pin-element")) return;
   startPan(event);
 };
 
 const handlePointerMove = (event: PointerEvent) => {
+  updateTouchPointer(event);
+  if (pinching.value && activeTouchPointers.size >= 2) {
+    const distance = getPinchDistance();
+    const center = getPinchCenter();
+    if (distance > 0 && pinchStartDistance > 0 && center) {
+      const scaleFactor = distance / pinchStartDistance;
+      applyZoom(pinchStartZoom * scaleFactor, center);
+    }
+    event.preventDefault();
+    return;
+  }
+
+  if (event.pointerType === "touch" && activeTouchPointers.size >= 2) {
+    beginPinch();
+    event.preventDefault();
+    return;
+  }
+
   if (draggingPinId.value) {
     if (!pinDragStartClient.value) return;
     const deltaX = event.clientX - pinDragStartClient.value.x;
@@ -380,7 +482,19 @@ const handlePointerMove = (event: PointerEvent) => {
   scheduleDetailRender(90);
 };
 
-const handlePointerUp = () => {
+const handlePointerUp = (event: PointerEvent) => {
+  if (event.pointerType === "touch") {
+    activeTouchPointers.delete(event.pointerId);
+    if (pinching.value && activeTouchPointers.size < 2) {
+      pinching.value = false;
+      pinchStartDistance = 0;
+      pinchStartZoom = zoom.value;
+      scheduleDetailRender(40);
+      emitViewState();
+      return;
+    }
+  }
+
   if (draggingPinId.value) {
     if (pinDragMoved.value && draggingPinPos.value) {
       emit("pin-move", {
@@ -403,6 +517,7 @@ const handlePointerUp = () => {
     }, 0);
     scheduleDetailRender(60);
   }
+  emitViewState();
 };
 
 const handleOverlayClick = (event: MouseEvent) => {
@@ -494,16 +609,24 @@ const isSelected = (pin: Pin) => {
 };
 
 const pinBg = (status: string) => {
-  if (status === "done") return "bg-emerald-500";
-  if (status === "blocked") return "bg-rose-500";
+  if (status === "approved") return "bg-emerald-500";
+  if (status === "resolved") return "bg-blue-500";
+  if (status === "rfi") return "bg-amber-500";
+  if (status === "instruction") return "bg-slate-500";
+  if (status === "done") return "bg-blue-500";
   if (status === "in_progress") return "bg-amber-500";
-  return "bg-brand-500";
+  if (status === "blocked") return "bg-amber-600";
+  return "bg-slate-500";
 };
 
 const zoneClass = (status: string) => {
-  if (status === "done") return "border-emerald-500 bg-emerald-100/40";
+  if (status === "approved") return "border-emerald-500 bg-emerald-100/40";
+  if (status === "resolved") return "border-blue-500 bg-blue-100/40";
+  if (status === "rfi") return "border-amber-500 bg-amber-100/40";
+  if (status === "instruction") return "border-slate-500 bg-slate-100/40";
+  if (status === "done") return "border-blue-500 bg-blue-100/40";
   if (status === "in_progress") return "border-amber-500 bg-amber-100/40";
-  return "border-brand-500 bg-brand-100/30";
+  return "border-slate-500 bg-slate-100/40";
 };
 
 const zoneStyle = (shape?: Zone["shape"]) => ({
@@ -518,6 +641,9 @@ let currentPdfTask: any = null;
 let currentPdfDoc: any = null;
 let currentPdfPage: any = null;
 let currentPdfUrl = "";
+let comparePdfTask: any = null;
+let comparePdfDoc: any = null;
+let comparePdfUrl = "";
 let renderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let detailRenderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let renderingInProgress = false;
@@ -528,6 +654,7 @@ let currentDetailRenderTask: any = null;
 let pageBaseMetrics: { fitScale: number; width: number; height: number } | null = null;
 let baseCanvasEl: HTMLCanvasElement | null = null;
 let detailCanvasEl: HTMLCanvasElement | null = null;
+let compareCanvasEl: HTMLCanvasElement | null = null;
 let viewportResizeObserver: ResizeObserver | null = null;
 
 const getPdfJsLib = async () => {
@@ -561,8 +688,17 @@ const clearRenderedCanvases = (container: HTMLElement) => {
   canvases.forEach((canvas) => canvas.remove());
   baseCanvasEl = null;
   detailCanvasEl = null;
+  compareCanvasEl = null;
   pageBaseMetrics = null;
   pdfHasContent.value = false;
+};
+
+const applyCompareCanvasStyle = () => {
+  if (!compareCanvasEl) return;
+  const opacity = clampInRange(props.compareOpacity ?? 0.55, 0, 1);
+  const blendMode = props.compareBlendMode || "difference";
+  compareCanvasEl.style.opacity = `${opacity}`;
+  compareCanvasEl.style.mixBlendMode = blendMode;
 };
 
 const ensureBaseCanvas = (container: HTMLElement) => {
@@ -589,6 +725,21 @@ const ensureDetailCanvas = (container: HTMLElement) => {
   return detailCanvasEl;
 };
 
+const ensureCompareCanvas = (container: HTMLElement) => {
+  if (!compareCanvasEl || !container.contains(compareCanvasEl)) {
+    compareCanvasEl = document.createElement("canvas");
+    compareCanvasEl.style.position = "absolute";
+    compareCanvasEl.style.left = "0";
+    compareCanvasEl.style.top = "0";
+    compareCanvasEl.style.zIndex = "3";
+    compareCanvasEl.style.pointerEvents = "none";
+    compareCanvasEl.style.display = "none";
+    container.appendChild(compareCanvasEl);
+  }
+  applyCompareCanvasStyle();
+  return compareCanvasEl;
+};
+
 const destroyCurrentPdfTask = () => {
   if (!currentPdfTask) return;
   try {
@@ -597,6 +748,16 @@ const destroyCurrentPdfTask = () => {
     // ignore
   }
   currentPdfTask = null;
+};
+
+const destroyComparePdfTask = () => {
+  if (!comparePdfTask) return;
+  try {
+    comparePdfTask.destroy();
+  } catch {
+    // ignore
+  }
+  comparePdfTask = null;
 };
 
 const destroyCurrentPdfDoc = async () => {
@@ -612,6 +773,21 @@ const destroyCurrentPdfDoc = async () => {
     // ignore
   }
   currentPdfDoc = null;
+};
+
+const destroyComparePdfDoc = async () => {
+  if (!comparePdfDoc) return;
+  try {
+    await comparePdfDoc.destroy();
+  } catch {
+    // ignore
+  }
+  comparePdfDoc = null;
+};
+
+const hideCompareCanvas = () => {
+  if (!compareCanvasEl) return;
+  compareCanvasEl.style.display = "none";
 };
 
 const loadPdfDocument = async () => {
@@ -634,6 +810,67 @@ const loadPdfDocument = async () => {
   currentPdfTask = pdfjsLib.getDocument(url);
   currentPdfDoc = await currentPdfTask.promise;
   currentPdfUrl = url;
+};
+
+const loadComparePdfDocument = async () => {
+  if (!process.client) return;
+  const url = compareFileUrl.value;
+  if (!url) {
+    comparePdfUrl = "";
+    destroyComparePdfTask();
+    await destroyComparePdfDoc();
+    hideCompareCanvas();
+    return;
+  }
+  if (url === comparePdfUrl && comparePdfDoc) return;
+
+  const pdfjsLib = await getPdfJsLib();
+  destroyComparePdfTask();
+  await destroyComparePdfDoc();
+
+  comparePdfTask = pdfjsLib.getDocument(url);
+  comparePdfDoc = await comparePdfTask.promise;
+  comparePdfUrl = url;
+};
+
+const renderCompareLayer = async () => {
+  const container = pdfContainerRef.value;
+  if (!container || !pageBaseMetrics || !compareFileUrl.value || !comparePdfDoc) {
+    hideCompareCanvas();
+    return;
+  }
+
+  try {
+    const page = await comparePdfDoc.getPage(1);
+    const naturalViewport = page.getViewport({ scale: 1 });
+    const targetWidth = pageBaseMetrics.width;
+    const scale = targetWidth / naturalViewport.width;
+    const viewport = page.getViewport({ scale });
+    const ratio = Math.min(window.devicePixelRatio || 1, 1.25);
+
+    const compareCanvas = ensureCompareCanvas(container);
+    compareCanvas.style.display = "block";
+    compareCanvas.style.width = `${Math.floor(viewport.width)}px`;
+    compareCanvas.style.height = `${Math.floor(viewport.height)}px`;
+    compareCanvas.width = Math.max(1, Math.floor(viewport.width * ratio));
+    compareCanvas.height = Math.max(1, Math.floor(viewport.height * ratio));
+
+    const context = compareCanvas.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, compareCanvas.width, compareCanvas.height);
+
+    await page.render({
+      canvasContext: context,
+      viewport,
+      transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0]
+    }).promise;
+    applyCompareCanvasStyle();
+  } catch (err: any) {
+    if (err?.name !== "RenderingCancelledException") {
+      console.error("Compare PDF render error:", err);
+    }
+    hideCompareCanvas();
+  }
 };
 
 const renderLoadedPdf = async () => {
@@ -688,9 +925,11 @@ const renderLoadedPdf = async () => {
     };
     ensureDetailCanvas(container);
     pdfHasContent.value = true;
+    await renderCompareLayer();
     nextTick(() => {
       clampOffsetToViewport();
       void renderVisibleTile();
+      emitViewState();
     });
   } catch (err: any) {
     if (err?.name !== "RenderingCancelledException") {
@@ -822,12 +1061,38 @@ const schedulePdfRender = (delayMs = 0) => {
 const reloadPdfAndRender = async () => {
   try {
     await loadPdfDocument();
+    await loadComparePdfDocument();
     await renderLoadedPdf();
   } catch (err: any) {
     if (err?.name !== "RenderingCancelledException") {
       console.error("PDF load error:", err);
     }
   }
+};
+
+const applyDeepLinkFocusIfNeeded = async () => {
+  const focus = pendingDeepLink.value;
+  if (!focus) return;
+  const currentDrawingId = getCurrentDrawingId();
+  if (!currentDrawingId || focus.drawingId !== currentDrawingId) return;
+  if (!pdfHasContent.value) return;
+
+  const targetZoom = clampZoom(focus.zoom ?? Math.max(zoom.value, 1.5));
+  zoom.value = targetZoom;
+
+  await nextTick();
+  const viewport = viewportRef.value;
+  const content = contentRef.value;
+  if (!viewport || !content || content.offsetWidth === 0 || content.offsetHeight === 0) return;
+
+  const pinX = clamp(focus.pinX ?? 0.5);
+  const pinY = clamp(focus.pinY ?? 0.5);
+  offset.x = viewport.clientWidth / 2 - pinX * content.offsetWidth * targetZoom;
+  offset.y = viewport.clientHeight / 2 - pinY * content.offsetHeight * targetZoom;
+  clampOffsetToViewport();
+  scheduleDetailRender(0);
+  emitViewState();
+  clearDeepLinkFocus();
 };
 
 const handleWindowResize = () => {
@@ -838,6 +1103,10 @@ watch(
   () => props.drawing?._id || props.drawing?.id || "",
   () => {
     resetView();
+    pinching.value = false;
+    activeTouchPointers.clear();
+    pinchStartDistance = 0;
+    pinchStartZoom = zoom.value;
     draggingPinId.value = null;
     draggingPinPos.value = null;
     pinDragMoved.value = false;
@@ -856,6 +1125,29 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => compareFileUrl.value,
+  () => {
+    nextTick(() => {
+      void reloadPdfAndRender();
+    });
+  }
+);
+
+watch(
+  () => [props.compareBlendMode, props.compareOpacity],
+  () => {
+    applyCompareCanvasStyle();
+  }
+);
+
+watch(
+  () => [pendingDeepLink.value?.requestedAt, pdfHasContent.value, props.drawing?._id || props.drawing?.id],
+  () => {
+    void applyDeepLinkFocusIfNeeded();
+  }
+);
+
 onMounted(() => {
   window.addEventListener("resize", handleWindowResize);
 
@@ -869,6 +1161,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", handleWindowResize);
+  pinching.value = false;
+  activeTouchPointers.clear();
   if (viewportResizeObserver) {
     viewportResizeObserver.disconnect();
     viewportResizeObserver = null;
@@ -883,7 +1177,9 @@ onBeforeUnmount(() => {
   }
   cancelDetailRenderTask();
   destroyCurrentPdfTask();
+  destroyComparePdfTask();
   void destroyCurrentPdfDoc();
+  void destroyComparePdfDoc();
 });
 </script>
 

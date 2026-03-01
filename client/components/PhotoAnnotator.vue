@@ -1242,7 +1242,7 @@ const saveAnnotations = async () => {
     });
     if (isOfflineQueuedResponse(result)) {
       saveDraft();
-      toast.push("Da luu tam do dac, se dong bo khi co mang", "info");
+      toast.push("Đã lưu tạm đo đạc, sẽ đồng bộ khi có mạng", "info");
     } else {
       clearDraft(props.photoId); // Xoá draft sau khi lưu thành công
       toast.push("Đã lưu đo đạc", "success");

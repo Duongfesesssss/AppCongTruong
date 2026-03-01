@@ -33,11 +33,12 @@ export type DisciplineItem = {
 
 export type DrawingItem = {
   _id: string;
-  disciplineId: string;
-  floorId: string;
-  buildingId: string;
+  disciplineId?: string;
+  floorId?: string;
+  buildingId?: string;
   projectId: string;
   name: string;
+  tagNames?: string[];
 };
 
 export const useCatalog = () => {

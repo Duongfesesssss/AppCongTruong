@@ -55,6 +55,94 @@
           <p class="text-[10px] sm:text-xs font-medium uppercase text-slate-400">Mô tả</p>
           <p class="mt-1 text-xs sm:text-sm text-slate-700">{{ task.description }}</p>
         </div>
+
+        <div class="mt-4 sm:mt-6 border-t border-slate-100 pt-4 sm:pt-5">
+          <div class="flex items-center justify-between gap-2">
+            <p class="text-[10px] sm:text-xs font-medium uppercase text-slate-400">Chỉnh sửa Pin/Task</p>
+            <p v-if="editDisabledReason" class="text-[10px] sm:text-xs text-amber-600">{{ editDisabledReason }}</p>
+          </div>
+
+          <div class="mt-3 grid gap-3 sm:grid-cols-2">
+            <div class="sm:col-span-2">
+              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tên Pin</label>
+              <input
+                v-model="editForm.pinName"
+                type="text"
+                class="input"
+                placeholder="VD: Điểm đo 1"
+                :disabled="savingTask || !canUpdateTask"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Trạng thái</label>
+              <select v-model="editForm.status" class="input" :disabled="savingTask || !canUpdateTask">
+                <option value="instruction">Hướng dẫn cho người vẽ</option>
+                <option value="rfi">Yêu cầu thêm thông tin (RFI)</option>
+                <option value="resolved">Đã hoàn thành</option>
+                <option value="approved">Đã được QA kiểm soát</option>
+                <option value="open">Mở</option>
+                <option value="in_progress">Đang làm</option>
+                <option value="blocked">Bị chặn</option>
+                <option value="done">Xong</option>
+              </select>
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Loại</label>
+              <select v-model="editForm.category" class="input" :disabled="savingTask || !canUpdateTask">
+                <option value="quality">Chất lượng</option>
+                <option value="safety">An toàn</option>
+                <option value="progress">Tiến độ</option>
+                <option value="fire_protection">Chống cháy</option>
+                <option value="other">Khác</option>
+              </select>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Mô tả (hỗ trợ @username)
+              </label>
+              <textarea
+                v-model="editForm.description"
+                class="input"
+                rows="3"
+                placeholder="Nhập mô tả, có thể tag người bằng @username"
+                :disabled="savingTask || !canUpdateTask"
+              ></textarea>
+              <div v-if="mentionCandidates.length > 0" class="mt-2 flex flex-wrap gap-1">
+                <button
+                  v-for="candidate in mentionCandidates"
+                  :key="candidate.id"
+                  type="button"
+                  class="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+                  :disabled="savingTask || !canUpdateTask"
+                  @click="insertMentionToken(candidate.mentionToken)"
+                >
+                  {{ candidate.name }} (@{{ candidate.mentionToken }})
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <p v-if="editError" class="mt-2 text-xs text-rose-600">{{ editError }}</p>
+
+          <div class="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+              :disabled="savingTask || !canUpdateTask"
+              @click="resetEditForm"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              class="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+              :disabled="savingTask || !canUpdateTask || !isEditDirty"
+              @click="saveTaskEdits"
+            >
+              {{ savingTask ? "Đang lưu..." : "Lưu chỉnh sửa" }}
+            </button>
+          </div>
+        </div>
       </section>
 
       <!-- Photos Section -->
@@ -140,7 +228,7 @@
               v-if="photo._offlineQueued"
               class="absolute right-1 top-1 z-10 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white"
             >
-              Cho dong bo
+              Chờ đồng bộ
             </div>
             <div
               class="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors"
@@ -158,8 +246,10 @@
     </template>
 
     <!-- Photo Annotator Modal -->
-    <PhotoAnnotator
-      :show="!!annotatingPhoto && !!annotatingPhoto._id"
+    <component
+      :is="PhotoAnnotatorAsync"
+      v-if="!!annotatingPhoto && !!annotatingPhoto._id"
+      :show="true"
       :photo-url="annotatingPhotoUrl"
       :photo-id="annotatingPhoto?._id || ''"
       :photo-width="annotatingPhoto?.width"
@@ -198,6 +288,7 @@ const props = defineProps<{
   taskId: string;
   taskData?: Record<string, unknown> | null;
   canDeletePhoto?: boolean;
+  canEditTask?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -215,6 +306,7 @@ const photos = ref<any[]>([]);
 const loading = ref(false);
 const error = ref("");
 const uploadingPhoto = ref(false);
+const PhotoAnnotatorAsync = defineAsyncComponent(() => import("~/components/PhotoAnnotator.vue"));
 
 // Photo upload modal state
 const showPhotoUploadModal = ref(false);
@@ -229,6 +321,151 @@ const annotatingPhotoUrl = computed(() => {
 // Delete photo state
 const showDeleteConfirm = ref(false);
 const deletingPhoto = ref<any>(null);
+const savingTask = ref(false);
+const editError = ref("");
+
+type MentionCandidate = {
+  id: string;
+  name: string;
+  mentionToken: string;
+};
+const mentionCandidates = ref<MentionCandidate[]>([]);
+
+const editForm = reactive({
+  pinName: "",
+  status: "instruction",
+  category: "quality",
+  description: ""
+});
+
+const normalizeText = (value: unknown) => String(value || "").trim();
+const resolveObjectId = (value: unknown) => {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "object") {
+    const maybeObject = value as { _id?: unknown; id?: unknown };
+    if (typeof maybeObject._id === "string") return maybeObject._id.trim();
+    if (typeof maybeObject.id === "string") return maybeObject.id.trim();
+  }
+  return "";
+};
+const isOfflineTask = computed(() => String(task.value?._id || props.taskId || "").startsWith("offline-"));
+const canEditByRole = computed(() => props.canEditTask !== false);
+const canUpdateTask = computed(() => !!task.value && !isOfflineTask.value && canEditByRole.value);
+const editDisabledReason = computed(() => {
+  if (!task.value) return "";
+  if (isOfflineTask.value) return "Task offline: chờ đồng bộ để chỉnh sửa";
+  if (!canEditByRole.value) return "Bạn không có quyền chỉnh sửa task/pin";
+  return "";
+});
+
+const syncEditFormFromTask = () => {
+  editForm.pinName = normalizeText(task.value?.pinName);
+  editForm.status = normalizeText(task.value?.status) || "instruction";
+  editForm.category = normalizeText(task.value?.category) || "quality";
+  editForm.description = normalizeText(task.value?.description);
+  editError.value = "";
+};
+
+const isEditDirty = computed(() => {
+  if (!task.value) return false;
+  return (
+    normalizeText(editForm.pinName) !== normalizeText(task.value.pinName) ||
+    normalizeText(editForm.status) !== normalizeText(task.value.status) ||
+    normalizeText(editForm.category) !== normalizeText(task.value.category) ||
+    normalizeText(editForm.description) !== normalizeText(task.value.description)
+  );
+});
+
+const mentionTokenRegex = /@([a-zA-Z0-9._-]{2,64})/;
+const hasMentionToken = (value: string) => mentionTokenRegex.test(value || "");
+
+const fetchMentionCandidates = async () => {
+  const projectId = resolveObjectId(task.value?.projectId) || resolveObjectId(props.taskData?.projectId);
+  if (!projectId) {
+    mentionCandidates.value = [];
+    return;
+  }
+
+  try {
+    const candidates = await api.get<Array<{ id?: string; name?: string; mentionToken?: string }>>(
+      `/chats/mention-candidates?scope=project&projectId=${projectId}`
+    );
+    const normalized = (candidates || [])
+      .map((item) => {
+        const mentionToken = String(item.mentionToken || "").trim();
+        const id = String(item.id || "").trim();
+        const name = String(item.name || mentionToken).trim();
+        if (!mentionToken || !id) return null;
+        return {
+          id,
+          name,
+          mentionToken
+        } as MentionCandidate;
+      })
+      .filter((item): item is MentionCandidate => !!item);
+    const deduped = Array.from(new Map(normalized.map((item) => [item.mentionToken, item])).values());
+    mentionCandidates.value = deduped.slice(0, 24);
+  } catch {
+    mentionCandidates.value = [];
+  }
+};
+
+const insertMentionToken = (token: string) => {
+  if (!token) return;
+  const mention = `@${token}`;
+  const current = editForm.description.trim();
+  if (!current) {
+    editForm.description = `${mention} `;
+    return;
+  }
+  if (current.includes(mention)) return;
+  editForm.description = `${current} ${mention} `;
+};
+
+const resetEditForm = () => {
+  syncEditFormFromTask();
+};
+
+const saveTaskEdits = async () => {
+  if (!task.value?._id || !canUpdateTask.value || savingTask.value) return;
+
+  savingTask.value = true;
+  editError.value = "";
+  try {
+    const nextDescription = normalizeText(editForm.description);
+    const previousDescription = normalizeText(task.value.description);
+    const payload: Record<string, unknown> = {
+      id: task.value._id,
+      pinName: normalizeText(editForm.pinName) || undefined,
+      status: normalizeText(editForm.status) || undefined,
+      category: normalizeText(editForm.category) || undefined,
+      description: nextDescription || undefined
+    };
+
+    if (nextDescription !== previousDescription && hasMentionToken(nextDescription)) {
+      payload.mentionText = nextDescription.slice(0, 500);
+    }
+
+    const result = await api.post<any>("/tasks", payload);
+    if (isOfflineQueuedResponse(result)) {
+      task.value = {
+        ...task.value,
+        ...payload
+      };
+      toast.push("Đã lưu tạm chỉnh sửa task/pin, sẽ đồng bộ khi có mạng.", "info");
+    } else {
+      task.value = result;
+      toast.push("Đã cập nhật task/pin", "success");
+    }
+    syncEditFormFromTask();
+    emit("updated");
+  } catch (err) {
+    editError.value = (err as Error).message || "Không thể cập nhật task/pin";
+  } finally {
+    savingTask.value = false;
+  }
+};
 
 const revokeLocalPreviewUrls = (items: any[]) => {
   if (!process.client) return;
@@ -239,12 +476,12 @@ const revokeLocalPreviewUrls = (items: any[]) => {
   }
 };
 
-const addQueuedPhotoPreview = (file: File, queueId: string, photoName: string) => {
+const addQueuedPhotoPreview = (file: File, queueId: string) => {
   if (!process.client) return;
   const previewUrl = URL.createObjectURL(file);
   photos.value.unshift({
     _id: `offline-${queueId}`,
-    storageKey: photoName || file.name,
+    storageKey: file.name,
     annotations: [],
     _offlineQueued: true,
     _offlinePreviewUrl: previewUrl
@@ -256,6 +493,8 @@ const applyTaskFallback = () => {
   task.value = { ...props.taskData };
   revokeLocalPreviewUrls(photos.value);
   photos.value = [];
+  syncEditFormFromTask();
+  void fetchMentionCandidates();
   error.value = "";
   return true;
 };
@@ -264,7 +503,7 @@ const loadTask = async () => {
   if (props.taskId.startsWith("offline-")) {
     loading.value = false;
     if (!applyTaskFallback()) {
-      error.value = "Task offline chua san sang. Vui long doi dong bo.";
+      error.value = "Task offline chưa sẵn sàng. Vui lòng đợi đồng bộ.";
     }
     return;
   }
@@ -279,11 +518,13 @@ const loadTask = async () => {
     task.value = taskData;
     revokeLocalPreviewUrls(photos.value);
     photos.value = photosData || [];
+    syncEditFormFromTask();
+    void fetchMentionCandidates();
   } catch (err) {
     const message = (err as Error).message || "";
     const likelyOffline =
       (process.client && !navigator.onLine) ||
-      /offline|network|failed to fetch|khong the tai/i.test(message);
+      /offline|network|failed to fetch|không thể tải/i.test(message);
     if (likelyOffline && applyTaskFallback()) {
       error.value = "";
     } else {
@@ -296,54 +537,34 @@ const loadTask = async () => {
 
 const handlePhotoUploadWithMetadata = async (data: {
   files: File[];
-  name: string;
-  description: string;
-  location: string;
-  category: string;
 }) => {
   uploadingPhoto.value = true;
   showPhotoUploadModal.value = false;
 
   try {
-    let queuedCount = 0;
-
-    // Upload each file with metadata
-    for (let i = 0; i < data.files.length; i++) {
-      const file = data.files[i];
-      const formData = new FormData();
-
-      formData.append("taskId", props.taskId);
-      formData.append("file", file);
-
-      // Generate name for multiple files: "Ảnh van 1", "Ảnh van 2", etc.
-      const photoName = data.files.length > 1
-        ? `${data.name} ${i + 1}`
-        : data.name;
-
-      formData.append("name", photoName);
-      if (data.description) formData.append("description", data.description);
-      if (data.location) formData.append("location", data.location);
-      if (data.category) formData.append("category", data.category);
-
-      const result = await api.upload("/photos", formData);
-      if (isOfflineQueuedResponse(result)) {
-        queuedCount += 1;
-        addQueuedPhotoPreview(file, result.queueId, photoName);
-      }
+    const formData = new FormData();
+    formData.append("taskId", props.taskId);
+    for (const file of data.files) {
+      formData.append("files", file);
     }
 
-    const uploadedNow = data.files.length - queuedCount;
-    if (uploadedNow > 0) {
-      toast.push(uploadedNow > 1 ? `Da tai ${uploadedNow} anh thanh cong` : "Tai anh thanh cong", "success");
-    }
-    if (queuedCount > 0) {
-      toast.push(`Da luu tam ${queuedCount} anh, se tu dong bo khi co mang`, "info");
+    const result = await api.upload<{
+      jobId: string;
+      status: string;
+      totalFiles: number;
+    }>("/photos/bulk", formData);
+
+    if (isOfflineQueuedResponse(result)) {
+      data.files.forEach((file, index) => {
+        addQueuedPhotoPreview(file, `${result.queueId}-${index + 1}`);
+      });
+      toast.push(`Đã lưu tạm ${data.files.length} ảnh, sẽ tự đồng bộ khi có mạng`, "info");
+      emit("updated");
+      return;
     }
 
-    if (process.client && navigator.onLine && uploadedNow > 0) {
-      await loadTask();
-    }
-    emit("updated");
+    toast.push(`Đang xử lý ${result.totalFiles} ảnh ở chế độ nền...`, "info");
+    void monitorBulkUploadJob(result.jobId);
   } catch (err) {
     toast.push((err as Error).message, "error");
   } finally {
@@ -351,33 +572,46 @@ const handlePhotoUploadWithMetadata = async (data: {
   }
 };
 
-// Legacy handler - can be removed if not used elsewhere
-const handlePhotoUpload = async (e: Event) => {
-  const input = e.target as HTMLInputElement;
-  if (!input.files?.length) return;
-
-  uploadingPhoto.value = true;
+const monitorBulkUploadJob = async (jobId: string) => {
   try {
-    // Hỗ trợ upload nhiều ảnh cùng lúc
-    for (const file of Array.from(input.files)) {
-      const formData = new FormData();
-      formData.append("taskId", props.taskId);
-      formData.append("file", file);
-      await api.upload("/photos", formData);
+    const maxAttempts = 120;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const job = await api.get<{
+        status: "processing" | "completed" | "completed_with_errors" | "failed";
+        totalFiles: number;
+        successCount: number;
+        failedCount: number;
+        errors: Array<{ fileName: string; message: string }>;
+      }>(`/photos/bulk/${jobId}`);
+
+      if (job.status === "processing") {
+        continue;
+      }
+
+      if (job.status === "completed") {
+        toast.push(`Đã tải ${job.successCount}/${job.totalFiles} ảnh`, "success");
+      } else if (job.status === "completed_with_errors") {
+        toast.push(
+          `Tải xong ${job.successCount}/${job.totalFiles} ảnh, lỗi ${job.failedCount} ảnh`,
+          "info"
+        );
+      } else {
+        const firstError = job.errors?.[0]?.message || "Upload thất bại";
+        toast.push(firstError, "error");
+      }
+
+      if (process.client && navigator.onLine) {
+        await loadTask();
+      }
+      emit("updated");
+      return;
     }
-    toast.push(
-      input.files.length > 1
-        ? `Đã tải ${input.files.length} ảnh thành công`
-        : "Tải ảnh thành công",
-      "success"
-    );
-    await loadTask();
-    emit("updated");
+
+    toast.push("Upload đang xử lý, vui lòng thử tải lại sau.", "info");
   } catch (err) {
-    toast.push((err as Error).message, "error");
-  } finally {
-    uploadingPhoto.value = false;
-    input.value = "";
+    toast.push((err as Error).message || "Không theo dõi được tiến trình upload", "error");
   }
 };
 
@@ -452,11 +686,11 @@ const handleAnnotationSaved = async () => {
 
 const handleDeletePhoto = (photo: any) => {
   if (props.canDeletePhoto === false) {
-    toast.push("Tai khoan ky thuat vien khong co quyen xoa anh", "info");
+    toast.push("Tài khoản kỹ thuật viên không có quyền xóa ảnh", "info");
     return;
   }
   if (photo?._offlineQueued) {
-    toast.push("Anh dang cho dong bo, chua the xoa.", "info");
+    toast.push("Ảnh đang chờ đồng bộ, chưa thể xóa.", "info");
     return;
   }
   console.log("handleDeletePhoto called with:", photo._id);
@@ -474,7 +708,7 @@ const confirmDeletePhoto = async () => {
     const queued = isOfflineQueuedResponse(result);
     photos.value = photos.value.filter((photo) => photo._id !== deletingPhoto.value._id);
     if (queued) {
-      toast.push("Lenh xoa da luu tam, se dong bo khi co mang", "info");
+      toast.push("Lệnh xóa đã lưu tạm, sẽ đồng bộ khi có mạng", "info");
     } else {
       toast.push("Đã xoá ảnh", "success");
     }
@@ -494,20 +728,28 @@ const confirmDeletePhoto = async () => {
 // Status helpers
 const statusBadge = (status: string) => {
   const badges: Record<string, string> = {
-    open: "bg-blue-100 text-blue-700",
+    instruction: "bg-slate-100 text-slate-700",
+    rfi: "bg-amber-100 text-amber-700",
+    resolved: "bg-blue-100 text-blue-700",
+    approved: "bg-emerald-100 text-emerald-700",
+    open: "bg-slate-100 text-slate-700",
     in_progress: "bg-amber-100 text-amber-700",
-    blocked: "bg-rose-100 text-rose-700",
-    done: "bg-emerald-100 text-emerald-700"
+    blocked: "bg-amber-100 text-amber-700",
+    done: "bg-blue-100 text-blue-700"
   };
   return badges[status] || "bg-slate-100 text-slate-600";
 };
 
 const statusLabel = (status: string) => {
   const labels: Record<string, string> = {
-    open: "Mở",
-    in_progress: "Đang làm",
-    blocked: "Chặn",
-    done: "Xong"
+    instruction: "Hướng dẫn",
+    rfi: "RFI",
+    resolved: "Đã hoàn thành",
+    approved: "Đã QA duyệt",
+    open: "Hướng dẫn",
+    in_progress: "RFI",
+    blocked: "RFI",
+    done: "Đã hoàn thành"
   };
   return labels[status] || status;
 };

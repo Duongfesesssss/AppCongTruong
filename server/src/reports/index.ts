@@ -148,11 +148,16 @@ router.get(
     const projectIds = Array.from(new Set(tasks.map((task) => task.projectId.toString())));
     const projects = await ProjectModel.find({ _id: { $in: projectIds } }).lean();
 
-    const buildingIds = Array.from(new Set(tasks.map((task) => task.buildingId.toString())));
-    const buildings = await BuildingModel.find({ _id: { $in: buildingIds } }).lean();
+    const buildingIds = Array.from(
+      new Set(tasks.map((task) => task.buildingId?.toString()).filter((value): value is string => !!value))
+    );
+    const buildings =
+      buildingIds.length > 0 ? await BuildingModel.find({ _id: { $in: buildingIds } }).lean() : [];
 
-    const floorIds = Array.from(new Set(tasks.map((task) => task.floorId.toString())));
-    const floors = await FloorModel.find({ _id: { $in: floorIds } }).lean();
+    const floorIds = Array.from(
+      new Set(tasks.map((task) => task.floorId?.toString()).filter((value): value is string => !!value))
+    );
+    const floors = floorIds.length > 0 ? await FloorModel.find({ _id: { $in: floorIds } }).lean() : [];
 
     const taskMap = new Map(tasks.map((task) => [task._id.toString(), task]));
     const drawingMap = new Map(drawings.map((drawing) => [drawing._id.toString(), drawing]));
@@ -208,8 +213,8 @@ router.get(
       const task = taskMap.get(photo.taskId.toString());
       const drawing = drawingMap.get(photo.drawingId.toString());
       const project = task ? projectMap.get(task.projectId.toString()) : undefined;
-      const building = task ? buildingMap.get(task.buildingId.toString()) : undefined;
-      const floor = task ? floorMap.get(task.floorId.toString()) : undefined;
+      const building = task?.buildingId ? buildingMap.get(task.buildingId.toString()) : undefined;
+      const floor = task?.floorId ? floorMap.get(task.floorId.toString()) : undefined;
 
       const rawAnnotations = photo.annotations as unknown;
       const annotations = Array.isArray(rawAnnotations) ? rawAnnotations : [];
@@ -261,8 +266,8 @@ router.get(
           pinCode: task?.pinCode ?? "",
           pinName: task?.pinName ?? "",
           project: project?.name ?? "",
-          building: building?.name ?? "",
-          floor: floor?.name ?? "",
+          building: building?.name ?? drawing?.parsedMetadata?.buildingCode ?? "",
+          floor: floor?.name ?? drawing?.parsedMetadata?.floorCode ?? "",
           photoLocation: photo.location ?? "",
           measureRoom: line.room ?? "",
           measureName: line.name ?? "",

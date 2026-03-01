@@ -58,20 +58,20 @@ const toRequestError = (fallback: string, source?: unknown) =>
 const requestToPromise = <T>(request: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(toRequestError("Loi IndexedDB", request.error ?? undefined));
+    request.onerror = () => reject(toRequestError("Lỗi IndexedDB", request.error ?? undefined));
   });
 
 const txToPromise = (tx: IDBTransaction) =>
   new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(toRequestError("Loi transaction IndexedDB", tx.error ?? undefined));
-    tx.onabort = () => reject(toRequestError("Transaction IndexedDB bi huy", tx.error ?? undefined));
+    tx.onerror = () => reject(toRequestError("Lỗi transaction IndexedDB", tx.error ?? undefined));
+    tx.onabort = () => reject(toRequestError("Transaction IndexedDB bị hủy", tx.error ?? undefined));
   });
 
 const openDb = () =>
   new Promise<IDBDatabase>((resolve, reject) => {
     if (!process.client || typeof indexedDB === "undefined") {
-      reject(new Error("Trinh duyet khong ho tro IndexedDB"));
+      reject(new Error("Trình duyệt không hỗ trợ IndexedDB"));
       return;
     }
 
@@ -84,7 +84,7 @@ const openDb = () =>
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(toRequestError("Khong mo duoc IndexedDB", request.error ?? undefined));
+    request.onerror = () => reject(toRequestError("Không mở được IndexedDB", request.error ?? undefined));
   });
 
 const normalizePath = (path: string) => {
@@ -390,7 +390,7 @@ export const useOfflineSync = () => {
     idempotencyKey?: string
   ): Promise<QueuedRequestResult> => {
     if (!process.client) {
-      throw new Error("Khong the luu tam request tren server");
+      throw new Error("Không thể lưu tạm request trên server");
     }
     const queueId = createQueueId();
     const createdAt = Date.now();
@@ -463,7 +463,7 @@ export const useOfflineSync = () => {
     if (!response.ok || payload?.success === false) {
       const apiErrorMessage =
         payload && payload.success === false ? payload.error?.message : undefined;
-      const errorMessage = apiErrorMessage || `Dong bo that bai (${response.status})`;
+      const errorMessage = apiErrorMessage || `Đồng bộ thất bại (${response.status})`;
       throw new Error(errorMessage);
     }
 
@@ -522,9 +522,9 @@ export const useOfflineSync = () => {
           const mapped = remapQueueItemReferences(item, { taskIdMap, photoIdMap });
           if (mapped.unresolvedReference) {
             if (mapped.unresolvedReference.type === "task") {
-              throw new Error("Task offline chua dong bo xong. Vui long cho dong bo tiep.");
+              throw new Error("Task offline chưa đồng bộ xong. Vui lòng chờ đồng bộ tiếp.");
             }
-            throw new Error("Anh offline chua dong bo xong. Vui long cho dong bo tiep.");
+            throw new Error("Ảnh offline chưa đồng bộ xong. Vui lòng chờ đồng bộ tiếp.");
           }
 
           const syncResult = await syncItem(mapped.item);
@@ -545,7 +545,7 @@ export const useOfflineSync = () => {
             break;
           }
 
-          const message = (err as Error).message || "Loi dong bo";
+          const message = (err as Error).message || "Lỗi đồng bộ";
           lastSyncError.value = message;
           await putQueueItem({
             ...item,
@@ -563,10 +563,10 @@ export const useOfflineSync = () => {
     if (syncedItems > 0) {
       lastSuccessfulSyncAt.value = Date.now();
       lastSuccessfulSyncCount.value = syncedItems;
-      toast?.push(`Da dong bo ${syncedItems} thao tac offline`, "success");
+      toast?.push(`Đã đồng bộ ${syncedItems} thao tác offline`, "success");
     }
     if (lastSyncError.value) {
-      toast?.push(`Dong bo tam dung: ${lastSyncError.value}`, "error");
+      toast?.push(`Đồng bộ tạm dừng: ${lastSyncError.value}`, "error");
     }
   };
 

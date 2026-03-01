@@ -1,4 +1,5 @@
-﻿import path from "node:path";
+import crypto from "node:crypto";
+import path from "node:path";
 import fs from "node:fs";
 
 import { Router } from "express";
@@ -12,12 +13,18 @@ import { errors } from "../lib/errors";
 import { createUploader, handleFileUpload } from "../lib/uploads";
 import { config } from "../lib/config";
 import { uploadLimiter } from "../middlewares/rate-limit";
-import { getS3SignedUrl, deleteFromS3, getS3Stream } from "../lib/s3";
+import { deleteFromS3, getS3Stream } from "../lib/s3";
 import { TaskModel } from "../tasks/task.model";
 import { ProjectModel } from "../projects/project.model";
 import { ensureProjectRole } from "../projects/project-access";
 import { PhotoModel } from "./photo.model";
-import { createPhotoSchema, photoIdSchema, updatePhotoSchema } from "./photo.schema";
+import {
+  bulkPhotoJobIdSchema,
+  createBulkPhotoSchema,
+  createPhotoSchema,
+  photoIdSchema,
+  updatePhotoSchema
+} from "./photo.schema";
 
 const router = Router();
 const upload = createUploader({
@@ -35,6 +42,55 @@ const excelUpload = createUploader({
   ],
   maxMb: 5
 });
+
+type PhotoMetadataPayload = {
+  name?: string;
+  description?: string;
+  location?: string;
+  category?: string;
+  measuredBy?: string;
+};
+
+type BulkUploadJobStatus = "processing" | "completed" | "completed_with_errors" | "failed";
+
+type BulkUploadJobError = {
+  fileName: string;
+  message: string;
+};
+
+type BulkUploadJob = {
+  id: string;
+  userId: string;
+  taskId: string;
+  status: BulkUploadJobStatus;
+  totalFiles: number;
+  processedFiles: number;
+  successCount: number;
+  failedCount: number;
+  createdPhotoIds: string[];
+  errors: BulkUploadJobError[];
+  createdAt: number;
+  updatedAt: number;
+  expiresAt: number;
+};
+
+const BULK_JOB_TTL_MS = 1000 * 60 * 30;
+const bulkUploadJobs = new Map<string, BulkUploadJob>();
+
+const cleanupExpiredBulkJobs = () => {
+  const now = Date.now();
+  for (const [jobId, job] of bulkUploadJobs.entries()) {
+    if (job.expiresAt <= now) {
+      bulkUploadJobs.delete(jobId);
+    }
+  }
+};
+
+const trimOptional = (value?: string) => {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
 
 const getLocalPhotoPath = (storageKey: string) => {
   const safeKey = path.basename(storageKey);
@@ -73,7 +129,61 @@ const getPhotoS3StreamWithFallback = async (storageKey: string) => {
     }
   }
 
-  throw errors.notFound("File không tồn tại");
+  throw errors.notFound("File khong ton tai");
+};
+
+const readImageDimensions = (file: Express.Multer.File) => {
+  try {
+    const dim = config.storageType === "s3" ? imageSize(file.buffer) : imageSize(file.path);
+    return {
+      width: dim.width ?? undefined,
+      height: dim.height ?? undefined
+    };
+  } catch {
+    return {
+      width: undefined,
+      height: undefined
+    };
+  }
+};
+
+const loadTaskWithAccess = async (taskId: string, userId: string) => {
+  const task = await TaskModel.findById(taskId);
+  if (!task) throw errors.notFound("Task khong ton tai");
+
+  ensureProjectRole(
+    await ProjectModel.findById(task.projectId),
+    userId,
+    "technician",
+    "Task khong ton tai hoac khong co quyen"
+  );
+
+  return task;
+};
+
+const createPhotoFromFile = async (
+  task: Awaited<ReturnType<typeof loadTaskWithAccess>>,
+  file: Express.Multer.File,
+  metadata: PhotoMetadataPayload
+) => {
+  const dimensions = readImageDimensions(file);
+  const storageKey = await handleFileUpload(file, "photos");
+
+  return PhotoModel.create({
+    taskId: task._id,
+    drawingId: task.drawingId,
+    storageKey,
+    mimeType: file.mimetype,
+    size: file.size,
+    width: dimensions.width,
+    height: dimensions.height,
+    name: trimOptional(metadata.name),
+    description: trimOptional(metadata.description),
+    location: trimOptional(metadata.location),
+    category: trimOptional(metadata.category),
+    measuredBy: trimOptional(metadata.measuredBy),
+    measuredAt: new Date()
+  });
 };
 
 router.post(
@@ -84,7 +194,7 @@ router.post(
   validate(createPhotoSchema),
   asyncHandler(async (req, res) => {
     if (!req.file) {
-      throw errors.validation("Yêu cầu file upload");
+      throw errors.validation("Yeu cau file upload");
     }
 
     const { taskId, name, description, location, category, measuredBy } = req.body as {
@@ -95,54 +205,152 @@ router.post(
       category?: string;
       measuredBy?: string;
     };
-    const task = await TaskModel.findById(taskId);
-    if (!task) throw errors.notFound("Task không tồn tại");
 
-    // Check ownership
-    ensureProjectRole(
-      await ProjectModel.findById(task.projectId),
-      req.user!.id,
-      "technician",
-      "Task không tồn tại hoặc không có quyền"
-    );
-
-    // Get image dimensions
-    let width: number | undefined;
-    let height: number | undefined;
-    try {
-      // For S3, use buffer; for local, use path
-      const dim = config.storageType === "s3"
-        ? imageSize(req.file.buffer)
-        : imageSize(req.file.path);
-      width = dim.width ?? undefined;
-      height = dim.height ?? undefined;
-    } catch {
-      width = undefined;
-      height = undefined;
-    }
-
-    // Handle file upload (S3 or local)
-    const storageKey = await handleFileUpload(req.file, "photos");
-
-    const photo = await PhotoModel.create({
-      taskId: task._id,
-      drawingId: task.drawingId,
-      storageKey,
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-      width,
-      height,
-
-      // Photo metadata
+    const task = await loadTaskWithAccess(taskId, req.user!.id);
+    const photo = await createPhotoFromFile(task, req.file, {
       name,
       description,
       location,
       category,
-      measuredBy,
-      measuredAt: new Date()
+      measuredBy
     });
 
     return sendSuccess(res, photo, {}, 201);
+  })
+);
+
+router.post(
+  "/bulk",
+  requireAuth,
+  uploadLimiter,
+  upload.array("files", 50),
+  validate(createBulkPhotoSchema),
+  asyncHandler(async (req, res) => {
+    cleanupExpiredBulkJobs();
+
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    if (files.length === 0) {
+      throw errors.validation("Yeu cau it nhat 1 file");
+    }
+
+    const { taskId, name, description, location, category, measuredBy } = req.body as {
+      taskId: string;
+      name?: string;
+      description?: string;
+      location?: string;
+      category?: string;
+      measuredBy?: string;
+    };
+
+    // Validate access before creating background job.
+    await loadTaskWithAccess(taskId, req.user!.id);
+
+    const now = Date.now();
+    const jobId = crypto.randomUUID();
+    const job: BulkUploadJob = {
+      id: jobId,
+      userId: req.user!.id,
+      taskId,
+      status: "processing",
+      totalFiles: files.length,
+      processedFiles: 0,
+      successCount: 0,
+      failedCount: 0,
+      createdPhotoIds: [],
+      errors: [],
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: now + BULK_JOB_TTL_MS
+    };
+
+    bulkUploadJobs.set(jobId, job);
+
+    setImmediate(async () => {
+      try {
+        const task = await loadTaskWithAccess(taskId, req.user!.id);
+
+        for (const [index, file] of files.entries()) {
+          try {
+            const numberedName =
+              name && files.length > 1 ? `${trimOptional(name)} ${index + 1}` : trimOptional(name);
+            const photo = await createPhotoFromFile(task, file, {
+              name: numberedName,
+              description,
+              location,
+              category,
+              measuredBy
+            });
+            job.createdPhotoIds.push(photo._id.toString());
+            job.successCount += 1;
+          } catch (err) {
+            job.failedCount += 1;
+            job.errors.push({
+              fileName: file.originalname,
+              message: (err as Error).message || "Upload failed"
+            });
+          } finally {
+            job.processedFiles += 1;
+            job.updatedAt = Date.now();
+          }
+        }
+
+        if (job.successCount === 0 && job.failedCount > 0) {
+          job.status = "failed";
+        } else if (job.failedCount > 0) {
+          job.status = "completed_with_errors";
+        } else {
+          job.status = "completed";
+        }
+      } catch (err) {
+        job.status = "failed";
+        job.updatedAt = Date.now();
+        job.errors.push({
+          fileName: "batch",
+          message: (err as Error).message || "Bulk upload failed"
+        });
+      } finally {
+        job.expiresAt = Date.now() + BULK_JOB_TTL_MS;
+      }
+    });
+
+    return sendSuccess(
+      res,
+      {
+        jobId,
+        status: job.status,
+        totalFiles: job.totalFiles
+      },
+      {},
+      202
+    );
+  })
+);
+
+router.get(
+  "/bulk/:jobId",
+  requireAuth,
+  validate(bulkPhotoJobIdSchema),
+  asyncHandler(async (req, res) => {
+    cleanupExpiredBulkJobs();
+
+    const job = bulkUploadJobs.get(req.params.jobId);
+    if (!job) throw errors.notFound("Khong tim thay job bulk upload");
+
+    if (job.userId !== req.user!.id) {
+      throw errors.forbidden("Khong co quyen xem job nay");
+    }
+
+    return sendSuccess(res, {
+      id: job.id,
+      status: job.status,
+      taskId: job.taskId,
+      totalFiles: job.totalFiles,
+      processedFiles: job.processedFiles,
+      successCount: job.successCount,
+      failedCount: job.failedCount,
+      createdPhotoIds: job.createdPhotoIds,
+      errors: job.errors
+    });
   })
 );
 
@@ -153,17 +361,17 @@ router.patch(
   validate(updatePhotoSchema),
   asyncHandler(async (req, res) => {
     const photo = await PhotoModel.findById(req.params.id);
-    if (!photo) throw errors.notFound("Photo không tồn tại");
+    if (!photo) throw errors.notFound("Photo khong ton tai");
 
     // Check ownership through task
     const task = await TaskModel.findById(photo.taskId);
-    if (!task) throw errors.notFound("Photo không tồn tại");
+    if (!task) throw errors.notFound("Photo khong ton tai");
 
     ensureProjectRole(
       await ProjectModel.findById(task.projectId),
       req.user!.id,
       "technician",
-      "Photo không tồn tại hoặc không có quyền"
+      "Photo khong ton tai hoac khong co quyen"
     );
 
     photo.annotations = req.body.annotations;
@@ -179,17 +387,17 @@ router.get(
   validate(photoIdSchema),
   asyncHandler(async (req, res) => {
     const photo = await PhotoModel.findById(req.params.id);
-    if (!photo) throw errors.notFound("Photo không tồn tại");
+    if (!photo) throw errors.notFound("Photo khong ton tai");
 
     // Check ownership through task
     const task = await TaskModel.findById(photo.taskId);
-    if (!task) throw errors.notFound("Photo không tồn tại");
+    if (!task) throw errors.notFound("Photo khong ton tai");
 
     ensureProjectRole(
       await ProjectModel.findById(task.projectId),
       req.user!.id,
       "technician",
-      "Photo không tồn tại hoặc không có quyền"
+      "Photo khong ton tai hoac khong co quyen"
     );
 
     // CORS headers cho embedded content
@@ -206,7 +414,7 @@ router.get(
     } else {
       // Serve from local filesystem
       const filePath = getLocalPhotoPath(photo.storageKey);
-      if (!fs.existsSync(filePath)) throw errors.notFound("File không tồn tại");
+      if (!fs.existsSync(filePath)) throw errors.notFound("File khong ton tai");
 
       const safeKey = path.basename(photo.storageKey);
       res.setHeader("Content-Disposition", `inline; filename="${safeKey}"`);
@@ -221,17 +429,17 @@ router.delete(
   validate(photoIdSchema),
   asyncHandler(async (req, res) => {
     const photo = await PhotoModel.findById(req.params.id);
-    if (!photo) throw errors.notFound("Photo không tồn tại");
+    if (!photo) throw errors.notFound("Photo khong ton tai");
 
     // Check ownership through task
     const task = await TaskModel.findById(photo.taskId);
-    if (!task) throw errors.notFound("Photo không tồn tại");
+    if (!task) throw errors.notFound("Photo khong ton tai");
 
     ensureProjectRole(
       await ProjectModel.findById(task.projectId),
       req.user!.id,
       "admin",
-      "Photo không tồn tại hoặc không có quyền"
+      "Photo khong ton tai hoac khong co quyen"
     );
 
     // Delete file from storage
@@ -264,21 +472,21 @@ router.post(
   validate(photoIdSchema),
   asyncHandler(async (req, res) => {
     if (!req.file) {
-      throw errors.validation("Yêu cầu file Excel");
+      throw errors.validation("Yeu cau file Excel");
     }
 
     const photo = await PhotoModel.findById(req.params.id);
-    if (!photo) throw errors.notFound("Photo không tồn tại");
+    if (!photo) throw errors.notFound("Photo khong ton tai");
 
     // Check ownership through task
     const task = await TaskModel.findById(photo.taskId);
-    if (!task) throw errors.notFound("Photo không tồn tại");
+    if (!task) throw errors.notFound("Photo khong ton tai");
 
     ensureProjectRole(
       await ProjectModel.findById(task.projectId),
       req.user!.id,
       "technician",
-      "Photo không tồn tại hoặc không có quyền"
+      "Photo khong ton tai hoac khong co quyen"
     );
 
     try {
@@ -300,15 +508,15 @@ router.post(
 
         if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) {
           throw errors.validation(
-            `Hàng ${index + 2}: Tọa độ không hợp lệ. Cần có x1, y1, x2, y2 với giá trị số. ` +
-            `Nhận được: x1=${row.x1}, y1=${row.y1}, x2=${row.x2}, y2=${row.y2}`
+            `Hang ${index + 2}: Toa do khong hop le. Can co x1, y1, x2, y2 voi gia tri so. ` +
+              `Nhan duoc: x1=${row.x1}, y1=${row.y1}, x2=${row.x2}, y2=${row.y2}`
           );
         }
 
         if (x1 < 0 || x1 > 1 || y1 < 0 || y1 > 1 || x2 < 0 || x2 > 1 || y2 < 0 || y2 > 1) {
           throw errors.validation(
-            `Hàng ${index + 2}: Tọa độ phải nằm trong khoảng 0-1. ` +
-            `Nhận được: x1=${x1}, y1=${y1}, x2=${x2}, y2=${y2}`
+            `Hang ${index + 2}: Toa do phai nam trong khoang 0-1. ` +
+              `Nhan duoc: x1=${x1}, y1=${y1}, x2=${x2}, y2=${y2}`
           );
         }
 

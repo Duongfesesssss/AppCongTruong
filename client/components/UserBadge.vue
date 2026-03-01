@@ -4,6 +4,16 @@
       <p class="text-xs font-medium text-slate-900 sm:text-sm">{{ auth.user?.name || "..." }}</p>
       <p class="hidden text-xs text-slate-500 sm:block">{{ auth.user?.email || "" }}</p>
     </div>
+    <NuxtLink
+      to="/cms"
+      class="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 sm:px-3 sm:py-1 sm:text-xs"
+      title="CMS quản trị"
+    >
+      <span class="hidden sm:inline">CMS</span>
+      <svg class="h-4 w-4 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h10" />
+      </svg>
+    </NuxtLink>
     <button
       v-if="auth.user"
       class="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 sm:px-3 sm:py-1 sm:text-xs"

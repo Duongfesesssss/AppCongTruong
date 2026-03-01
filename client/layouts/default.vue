@@ -15,7 +15,24 @@
       <div>
         <p class="text-xs uppercase tracking-widest text-slate-400">Construction</p>
       </div>
-      <UserBadge />
+      <div class="flex items-center gap-2">
+        <NotificationBell />
+        <button
+          class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 hover:bg-slate-100"
+          title="Mở chat"
+          @click="chatOpen = true"
+        >
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-4 4v-4z"
+            />
+          </svg>
+        </button>
+        <UserBadge />
+      </div>
     </header>
 
     <!-- Mobile sidebar overlay -->
@@ -46,7 +63,24 @@
             <p class="text-xs uppercase tracking-widest text-slate-400">Construction</p>
             <h1 class="text-lg font-semibold text-slate-900">Bảng Điều Khiển</h1>
           </div>
-          <UserBadge />
+          <div class="flex items-center gap-2">
+            <NotificationBell />
+            <button
+              class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 hover:bg-slate-100"
+              title="Mở chat"
+              @click="chatOpen = true"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-4 4v-4z"
+                />
+              </svg>
+            </button>
+            <UserBadge />
+          </div>
         </header>
         <main class="flex-1 p-3 sm:p-4 lg:p-6">
           <slot />
@@ -54,17 +88,48 @@
       </div>
     </div>
 
+    <WorkspaceChatPanel :show="chatOpen" @close="chatOpen = false" />
     <ToastList />
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import { useRealtime } from "~/composables/state/useRealtime";
+
+const realtime = useRealtime();
 const sidebarOpen = ref(false);
+const chatOpen = ref(false);
 
 // Đóng sidebar khi chuyển route
 const route = useRoute();
-watch(() => route.fullPath, () => {
-  sidebarOpen.value = false;
+const syncSidebarStateByRoute = (nextPath: string, prevPath?: string) => {
+  if (!process.client) return;
+
+  if (window.innerWidth >= 1024) {
+    sidebarOpen.value = false;
+    return;
+  }
+
+  if (nextPath === "/" && (!prevPath || prevPath !== "/")) {
+    sidebarOpen.value = true;
+    return;
+  }
+
+  if (nextPath !== "/") {
+    sidebarOpen.value = false;
+  }
+};
+
+watch(
+  () => route.path,
+  (nextPath, prevPath) => {
+    syncSidebarStateByRoute(nextPath, prevPath);
+  },
+  { immediate: true }
+);
+
+onMounted(() => {
+  realtime.init();
 });
 </script>
 

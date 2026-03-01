@@ -1,11 +1,10 @@
-<template>
+﻿<template>
   <div>
     <div
       class="group flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-100"
       :class="selectedId === node.id ? 'bg-brand-50 text-brand-700' : 'text-slate-700'"
       :style="{ paddingLeft: `${level * 12 + 8}px` }"
     >
-      <!-- Expand/Collapse button -->
       <button
         v-if="hasChildren"
         class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200 hover:text-slate-600"
@@ -23,12 +22,10 @@
       </button>
       <span v-else class="h-5 w-5 shrink-0"></span>
 
-      <!-- Node icon -->
       <span class="shrink-0" :class="iconClass">
         <component :is="nodeIcon" class="h-4 w-4" />
       </span>
 
-      <!-- Node name: inline edit or display -->
       <input
         v-if="editing"
         ref="renameInput"
@@ -47,7 +44,6 @@
         <span class="font-medium">{{ node.name }}</span>
       </button>
 
-      <!-- Action menu -->
       <div v-if="hasMenuActions" ref="menuRef" class="relative shrink-0">
         <button
           class="flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-200 hover:text-slate-700"
@@ -112,12 +108,12 @@
       </div>
     </div>
 
-    <!-- Children (không hiển thị tasks trên cây) -->
     <div v-if="hasChildren && expanded && node.type !== 'drawing'" class="mt-0.5">
       <TreeNode
-        v-for="child in node.children"
+        v-for="child in childNodes"
         :key="child.id"
         :node="child"
+        :children-by-parent-id="childrenByParentId"
         :level="level + 1"
         :selected-id="selectedId"
         @select="emit('select', $event)"
@@ -134,8 +130,13 @@
 <script setup lang="ts">
 import type { ProjectTreeNode } from "~/composables/api/useProjectTree";
 
-const props = defineProps<{ node: ProjectTreeNode; level: number; selectedId?: string }>();
-const { node, level } = toRefs(props);
+const props = defineProps<{
+  node: ProjectTreeNode;
+  childrenByParentId: Map<string, ProjectTreeNode[]>;
+  level: number;
+  selectedId?: string;
+}>();
+const { node, level, childrenByParentId } = toRefs(props);
 
 const emit = defineEmits<{
   (e: "select", node: ProjectTreeNode): void;
@@ -153,10 +154,13 @@ const renameInput = ref<HTMLInputElement | null>(null);
 const menuOpen = ref(false);
 const menuRef = ref<HTMLElement | null>(null);
 
-// Không hiển thị expand button cho drawing vì tasks không hiển thị trên cây
+const childNodes = computed(() => {
+  return childrenByParentId.value.get(node.value.id) || [];
+});
+
 const hasChildren = computed(() => {
   if (node.value.type === "drawing") return false;
-  return (node.value.children || []).length > 0;
+  return childNodes.value.length > 0;
 });
 
 const toggle = () => {
@@ -201,28 +205,24 @@ const handleSelect = () => {
   emit("select", node.value);
 };
 
-// Xác định child type dựa vào parent type
 const childType = computed(() => {
   const childMap: Record<string, string> = {
-    project: "building",
-    building: "floor",
-    floor: "discipline",
-    discipline: "drawing",
+    project: "drawing",
     drawing: "task"
   };
   return childMap[node.value.type] || "";
 });
 
 const canAddChild = computed(() => {
-  return node.value.canManageStructure && ["project", "building", "floor", "discipline"].includes(node.value.type);
+  return node.value.canManageStructure && node.value.type === "project";
 });
 
 const canReorder = computed(() => {
-  return node.value.canManageStructure && ["project", "building", "floor", "discipline", "drawing"].includes(node.value.type);
+  return node.value.canManageStructure && ["project", "drawing"].includes(node.value.type);
 });
 
 const canDuplicate = computed(() => {
-  return node.value.canManageStructure && ["project", "building", "floor", "discipline", "drawing"].includes(node.value.type);
+  return node.value.canManageStructure && ["project", "drawing"].includes(node.value.type);
 });
 
 const canRename = computed(() => {
@@ -239,7 +239,7 @@ const hasMenuActions = computed(() => {
 
 const addChildLabel = computed(() => {
   const labels: Record<string, string> = {
-    project: "Thêm toà nhà",
+    project: "Thêm bản vẽ",
     building: "Thêm tầng",
     floor: "Thêm bộ môn",
     discipline: "Thêm bản vẽ",
@@ -247,17 +247,16 @@ const addChildLabel = computed(() => {
   };
   return labels[node.value.type] || "Thêm";
 });
-
 const deleteLabel = computed(() => {
   const labels: Record<string, string> = {
-    project: "Xoá dự án",
-    building: "Xoá toà nhà",
-    floor: "Xoá tầng",
-    discipline: "Xoá bộ môn",
-    drawing: "Xoá bản vẽ",
-    task: "Xoá Task"
+    project: "Xóa dự án",
+    building: "Xóa tòa nhà",
+    floor: "Xóa tầng",
+    discipline: "Xóa bộ môn",
+    drawing: "Xóa bản vẽ",
+    task: "Xóa Task"
   };
-  return labels[node.value.type] || "Xoá";
+  return labels[node.value.type] || "Xóa";
 });
 
 const handleAddChild = () => {
@@ -313,9 +312,12 @@ watch(menuOpen, (isOpen) => {
   document.removeEventListener("keydown", handleGlobalKeydown);
 });
 
-watch(() => props.selectedId, () => {
-  closeMenu();
-});
+watch(
+  () => props.selectedId,
+  () => {
+    closeMenu();
+  }
+);
 
 onBeforeUnmount(() => {
   if (typeof document === "undefined") return;
@@ -339,3 +341,4 @@ const iconClass = computed(() => {
   return classes[node.value.type] || "text-slate-400";
 });
 </script>
+

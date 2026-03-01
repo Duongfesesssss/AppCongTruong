@@ -21,10 +21,10 @@
               </div>
               <div class="min-w-0 flex-1">
                 <h3 class="truncate text-base font-semibold text-slate-900 sm:text-lg">
-                  Quan ly thanh vien
+                  Quản lý thành viên
                 </h3>
                 <p class="truncate text-xs text-slate-500">
-                  {{ projectName ? `Project: ${projectName}` : "Quan ly thanh vien trong project dang chon" }}
+                  {{ projectName ? `Project: ${projectName}` : "Quản lý thành viên trong project đang chọn" }}
                 </p>
               </div>
               <button
@@ -42,7 +42,7 @@
           <div class="border-b border-slate-100 px-4 py-4 sm:px-6">
             <form class="grid gap-2 sm:grid-cols-[1fr_auto]" @submit.prevent="handleAddMember">
               <div>
-                <label class="mb-1 block text-xs font-medium text-slate-700">Email ky thuat vien</label>
+                <label class="mb-1 block text-xs font-medium text-slate-700">Email kỹ thuật viên</label>
                 <input
                   v-model="memberEmail"
                   type="email"
@@ -57,7 +57,7 @@
                 class="inline-flex h-11 items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10"
                 :disabled="!canAddMember"
               >
-                {{ adding ? "Dang them..." : "Them thanh vien" }}
+                {{ adding ? "Đang thêm..." : "Thêm thành viên" }}
               </button>
             </form>
             <p v-if="formError" class="mt-2 text-xs text-rose-600">{{ formError }}</p>
@@ -65,7 +65,7 @@
 
           <div class="max-h-[55vh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
             <div v-if="loading" class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">
-              Dang tai danh sach thanh vien...
+              Đang tải danh sách thành viên...
             </div>
 
             <div v-else-if="loadError" class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
@@ -75,12 +75,12 @@
                 class="mt-2 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"
                 @click="fetchMembers"
               >
-                Thu lai
+                Thử lại
               </button>
             </div>
 
             <div v-else-if="members.length === 0" class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">
-              Chua co thanh vien nao trong project.
+              Chưa có thành viên nào trong project.
             </div>
 
             <ul v-else class="space-y-2">
@@ -92,9 +92,9 @@
                 <div class="flex flex-wrap items-center justify-between gap-3">
                   <div class="min-w-0 flex-1">
                     <p class="truncate text-sm font-semibold text-slate-900">{{ member.user.name || "Unknown" }}</p>
-                    <p class="truncate text-xs text-slate-500">{{ member.user.email || "Khong co email" }}</p>
+                    <p class="truncate text-xs text-slate-500">{{ member.user.email || "Không có email" }}</p>
                     <p class="mt-1 text-[11px] text-slate-400">
-                      {{ member.isOwner ? "Owner project" : "Duoc them" }}
+                      {{ member.isOwner ? "Owner project" : "Được thêm" }}
                       <span v-if="member.addedAt"> - {{ formatDate(member.addedAt) }}</span>
                     </p>
                   </div>
@@ -103,7 +103,7 @@
                       class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                       :class="member.role === 'admin' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'"
                     >
-                      {{ member.role === "admin" ? "Admin" : "Ky thuat vien" }}
+                      {{ member.role === "admin" ? "Admin" : "Kỹ thuật viên" }}
                     </span>
                     <button
                       v-if="canRemoveMember(member)"
@@ -112,7 +112,7 @@
                       :disabled="removingUserId === member.user.id"
                       @click="openRemoveConfirm(member)"
                     >
-                      {{ removingUserId === member.user.id ? "Dang xoa..." : "Xoa" }}
+                      {{ removingUserId === member.user.id ? "Đang xóa..." : "Xóa" }}
                     </button>
                   </div>
                 </div>
@@ -127,14 +127,14 @@
               :disabled="loading"
               @click="fetchMembers"
             >
-              Lam moi danh sach
+              Làm mới danh sách
             </button>
             <button
               type="button"
               class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200"
               @click="emit('close')"
             >
-              Dong
+              Đóng
             </button>
           </div>
         </div>
@@ -144,9 +144,9 @@
 
   <ConfirmModal
     :show="showRemoveConfirm"
-    title="Xoa thanh vien?"
+    title="Xóa thành viên?"
     :message="removeConfirmMessage"
-    confirm-text="Xoa"
+    confirm-text="Xóa"
     :danger="true"
     @confirm="confirmRemoveMember"
     @cancel="cancelRemoveMember"
@@ -209,7 +209,7 @@ const canAddMember = computed(() => {
 
 const removeConfirmMessage = computed(() => {
   if (!removeTarget.value) return "";
-  return `Ban chac chan muon xoa ${removeTarget.value.user.email} khoi project?`;
+  return `Bạn chắc chắn muốn xóa ${removeTarget.value.user.email} khỏi project?`;
 });
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -232,7 +232,7 @@ const fetchMembers = async () => {
     const data = await api.get<ProjectMembersResponse>(`/projects/${props.projectId}/members`);
     members.value = data.members || [];
   } catch (err) {
-    loadError.value = (err as Error).message || "Khong the tai danh sach thanh vien";
+    loadError.value = (err as Error).message || "Không thể tải danh sách thành viên";
   } finally {
     loading.value = false;
   }
@@ -242,7 +242,7 @@ const handleAddMember = async () => {
   formError.value = "";
   const email = memberEmail.value.trim().toLowerCase();
   if (!emailPattern.test(email)) {
-    formError.value = "Email khong hop le";
+    formError.value = "Email không hợp lệ";
     return;
   }
 
@@ -253,11 +253,11 @@ const handleAddMember = async () => {
       role: "technician"
     });
     memberEmail.value = "";
-    toast.push("Da them ky thuat vien vao project", "success");
+    toast.push("Đã thêm kỹ thuật viên vào project", "success");
     await fetchMembers();
     emit("updated");
   } catch (err) {
-    formError.value = (err as Error).message || "Khong the them thanh vien";
+    formError.value = (err as Error).message || "Không thể thêm thành viên";
   } finally {
     adding.value = false;
   }
@@ -285,11 +285,11 @@ const confirmRemoveMember = async () => {
   removingUserId.value = removeTarget.value.user.id;
   try {
     await api.delete(`/projects/${props.projectId}/members/${removeTarget.value.user.id}`);
-    toast.push("Da xoa thanh vien khoi project", "success");
+    toast.push("Đã xóa thành viên khỏi project", "success");
     await fetchMembers();
     emit("updated");
   } catch (err) {
-    toast.push((err as Error).message || "Khong the xoa thanh vien", "error");
+    toast.push((err as Error).message || "Không thể xóa thành viên", "error");
   } finally {
     removingUserId.value = "";
     cancelRemoveMember();

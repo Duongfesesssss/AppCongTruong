@@ -1,4 +1,5 @@
 ﻿import crypto from "node:crypto";
+import { createServer } from "node:http";
 
 import express from "express";
 import cors from "cors";
@@ -26,9 +27,15 @@ import templateRoutes from "./templates";
 import zoneRoutes from "./zones";
 import reportRoutes from "./reports";
 import roomRoutes from "./rooms";
+import realtimeRoutes from "./realtime";
+import notificationRoutes from "./notifications";
+import chatRoutes from "./chats";
+import cmsRoutes from "./cms";
 import { seedAdminUser } from "./auth/seed-admin";
+import { initRealtimeServer } from "./realtime/hub";
 
 const app = express();
+const httpServer = createServer(app);
 app.set("trust proxy", 1);
 
 const origins = config.corsOrigin
@@ -98,6 +105,10 @@ app.use("/api/templates", templateRoutes);
 app.use("/api/zones", zoneRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/rooms", roomRoutes);
+app.use("/api/realtime", realtimeRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/chats", chatRoutes);
+app.use("/api/cms", cmsRoutes);
 
 app.use((req, res) => {
   sendError(res, errors.notFound(`Khong tim thay ${req.path}`));
@@ -109,7 +120,8 @@ const start = async () => {
   try {
     await connectDb();
     await seedAdminUser();
-    app.listen(config.port, () => {
+    initRealtimeServer(httpServer);
+    httpServer.listen(config.port, () => {
       logger.info(`Server running at http://localhost:${config.port}`);
     });
   } catch (err) {

@@ -18,6 +18,7 @@ import { TaskModel } from "../tasks/task.model";
 const router = Router();
 
 type NodeType = "project" | "building" | "floor" | "discipline" | "drawing";
+type TreeNodeType = NodeType | "task";
 
 const nodeTypeSchema = z.enum(["project", "building", "floor", "discipline", "drawing"]);
 const reorderSchema = z.object({
@@ -34,45 +35,97 @@ const duplicateSchema = z.object({
   })
 });
 
-type TreeNode = {
+type FlatTreeNodeMetadata = {
+  buildingId?: string;
+  floorId?: string;
+  disciplineId?: string;
+  drawingId?: string;
+  taskId?: string;
+  pinCode?: string;
+  status?: string;
+  category?: string;
+  tagNames?: string[];
+};
+
+type FlatTreeNode = {
   id: string;
   name: string;
-  type: string;
+  type: TreeNodeType;
+  parentId: string | null;
+  parentType: TreeNodeType | null;
   sortIndex: number;
   projectId: string;
   projectRole: ProjectMemberRole;
   canManageStructure: boolean;
-  children: TreeNode[];
+  drawingCode?: string;
+  versionIndex?: number;
+  metadata: FlatTreeNodeMetadata;
 };
 
 const createNode = (
   id: string,
   name: string,
-  type: string,
+  type: TreeNodeType,
+  parentId: string | null,
+  parentType: TreeNodeType | null,
   projectId: string,
   projectRole: ProjectMemberRole,
-  sortIndex = 0
-): TreeNode => ({
+  sortIndex = 0,
+  extras: Partial<Pick<FlatTreeNode, "drawingCode" | "versionIndex" | "metadata">> = {}
+): FlatTreeNode => ({
   id,
   name,
   type,
+  parentId,
+  parentType,
   sortIndex,
   projectId,
   projectRole,
   canManageStructure: projectRole === "admin",
-  children: []
+  ...extras,
+  metadata: extras.metadata ?? {}
 });
 
-const sortTree = (nodes: TreeNode[]) => {
-  nodes.sort((a, b) => {
-    const indexA = Number.isFinite(a.sortIndex) ? a.sortIndex : 0;
-    const indexB = Number.isFinite(b.sortIndex) ? b.sortIndex : 0;
-    if (indexA !== indexB) return indexA - indexB;
-    return a.name.localeCompare(b.name, "vi");
-  });
+const compareNodes = (a: FlatTreeNode, b: FlatTreeNode) => {
+  const indexA = Number.isFinite(a.sortIndex) ? a.sortIndex : 0;
+  const indexB = Number.isFinite(b.sortIndex) ? b.sortIndex : 0;
+  if (indexA !== indexB) return indexA - indexB;
+  return a.name.localeCompare(b.name, "vi");
+};
+
+const orderFlatNodes = (nodes: FlatTreeNode[]) => {
+  const nodeMap = new Map<string, FlatTreeNode>();
   nodes.forEach((node) => {
-    if (node.children.length > 0) sortTree(node.children);
+    nodeMap.set(node.id, node);
   });
+
+  const childrenMap = new Map<string | null, FlatTreeNode[]>();
+  nodes.forEach((node) => {
+    const parentKey = node.parentId && nodeMap.has(node.parentId) ? node.parentId : null;
+    const siblings = childrenMap.get(parentKey) || [];
+    siblings.push(node);
+    childrenMap.set(parentKey, siblings);
+  });
+
+  childrenMap.forEach((siblings) => {
+    siblings.sort(compareNodes);
+  });
+
+  const orderedNodes: FlatTreeNode[] = [];
+  const rootNodes = childrenMap.get(null) || [];
+
+  const visit = (node: FlatTreeNode) => {
+    orderedNodes.push(node);
+    const children = childrenMap.get(node.id) || [];
+    children.forEach(visit);
+  };
+
+  rootNodes.forEach(visit);
+
+  return {
+    nodes: orderedNodes,
+    rootIds: rootNodes.map((node) => node.id)
+  };
 };
 
 const normalizeSiblingOrder = async (siblings: Array<{ sortIndex?: number; save: () => Promise<unknown> }>) => {
@@ -103,6 +156,22 @@ const toCopyName = (name: string) => {
   return clean.endsWith("(Copy)") ? `${clean} 2` : `${clean} (Copy)`;
 };
 
+const buildStandardizedDrawingFileName = (drawingCode: string, mimeType: string, fallbackOriginalName: string) => {
+  const safeCode =
+    drawingCode
+      .toUpperCase()
+      .replace(/[^A-Z0-9.-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "") || "DRAWING";
+
+  if (mimeType === "application/pdf") {
+    return `${safeCode}.pdf`;
+  }
+
+  const ext = (fallbackOriginalName || "").toLowerCase().match(/\.[a-z0-9]+$/)?.[0] || ".bin";
+  return `${safeCode}${ext}`;
+};
+
 const buildAdminProjectFilter = (userId: string) => ({
   $or: [{ userId }, { members: { $elemMatch: { userId, role: "admin" } } }]
 });
@@ -122,7 +191,9 @@ router.get(
   "/",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const projects = await ProjectModel.find(buildProjectAccessFilter(req.user!.id)).lean();
+    const projects = await ProjectModel.find(buildProjectAccessFilter(req.user!.id))
+      .sort({ sortIndex: 1, createdAt: 1 })
+      .lean();
     const projectsWithRole = projects
       .map((project) => ({
         project,
@@ -131,105 +202,91 @@ router.get(
       .filter((item): item is { project: (typeof projects)[number]; role: ProjectMemberRole } => !!item.role);
 
     const projectIds = projectsWithRole.map((item) => item.project._id);
+    if (projectIds.length === 0) {
+      return sendSuccess(res, { nodes: [], rootIds: [] });
+    }
 
-    const [buildings, floors, disciplines, drawings, tasks] = await Promise.all([
-      BuildingModel.find({ projectId: { $in: projectIds } }).lean(),
-      FloorModel.find({ projectId: { $in: projectIds } }).lean(),
-      DisciplineModel.find({ projectId: { $in: projectIds } }).lean(),
-      DrawingModel.find({ projectId: { $in: projectIds } }).lean(),
-      TaskModel.find({ projectId: { $in: projectIds } }).lean()
+    const [drawings, tasks] = await Promise.all([
+      DrawingModel.find({
+        projectId: { $in: projectIds },
+        $or: [{ isLatestVersion: true }, { isLatestVersion: { $exists: false } }]
+      })
+        .sort({ sortIndex: 1, createdAt: 1 })
+        .lean(),
+      TaskModel.find({ projectId: { $in: projectIds } }).sort({ createdAt: 1 }).lean()
     ]);
 
-    const projectMap = new Map<string, TreeNode>();
-    const buildingMap = new Map<string, TreeNode>();
-    const floorMap = new Map<string, TreeNode>();
-    const disciplineMap = new Map<string, TreeNode>();
-    const drawingMap = new Map<string, TreeNode>();
+    const nodes: FlatTreeNode[] = [];
+    const projectMap = new Map<string, FlatTreeNode>();
+    const drawingMap = new Map<string, FlatTreeNode>();
 
     projectsWithRole.forEach(({ project, role }) => {
       const projectId = project._id.toString();
-      projectMap.set(
-        projectId,
-        createNode(projectId, project.name, "project", projectId, role, project.sortIndex ?? 0)
-      );
-    });
-
-    buildings.forEach((building) => {
-      const parent = projectMap.get(building.projectId.toString());
-      if (!parent) return;
-      const node = createNode(
-        building._id.toString(),
-        building.name,
-        "building",
-        parent.projectId,
-        parent.projectRole,
-        building.sortIndex ?? 0
-      );
-      buildingMap.set(building._id.toString(), node);
-      parent.children.push(node);
-    });
-
-    floors.forEach((floor) => {
-      const parent = buildingMap.get(floor.buildingId.toString());
-      if (!parent) return;
-      const node = createNode(
-        floor._id.toString(),
-        floor.name,
-        "floor",
-        parent.projectId,
-        parent.projectRole,
-        floor.sortIndex ?? 0
-      );
-      floorMap.set(floor._id.toString(), node);
-      parent.children.push(node);
-    });
-
-    disciplines.forEach((discipline) => {
-      const parent = floorMap.get(discipline.floorId.toString());
-      if (!parent) return;
-      const node = createNode(
-        discipline._id.toString(),
-        discipline.name,
-        "discipline",
-        parent.projectId,
-        parent.projectRole,
-        discipline.sortIndex ?? 0
-      );
-      disciplineMap.set(discipline._id.toString(), node);
-      parent.children.push(node);
+      const node = createNode(projectId, project.name, "project", null, null, projectId, role, project.sortIndex ?? 0);
+      projectMap.set(projectId, node);
+      nodes.push(node);
     });
 
     drawings.forEach((drawing) => {
-      const parent = disciplineMap.get(drawing.disciplineId.toString());
+      const parent = projectMap.get(drawing.projectId.toString());
       if (!parent) return;
+      const drawingId = drawing._id.toString();
       const node = createNode(
-        drawing._id.toString(),
+        drawingId,
         drawing.name,
         "drawing",
+        parent.id,
+        "project",
         parent.projectId,
         parent.projectRole,
-        drawing.sortIndex ?? 0
+        drawing.sortIndex ?? 0,
+        {
+          drawingCode: drawing.drawingCode,
+          versionIndex: drawing.versionIndex ?? 1,
+          metadata: {
+            buildingId: drawing.buildingId ? drawing.buildingId.toString() : undefined,
+            floorId: drawing.floorId ? drawing.floorId.toString() : undefined,
+            disciplineId: drawing.disciplineId ? drawing.disciplineId.toString() : undefined,
+            drawingId,
+            tagNames: drawing.tagNames || []
+          }
+        }
       );
-      drawingMap.set(drawing._id.toString(), node);
-      parent.children.push(node);
+      drawingMap.set(drawingId, node);
+      nodes.push(node);
     });
 
     tasks.forEach((task) => {
       const parent = drawingMap.get(task.drawingId.toString());
       if (!parent) return;
+      const taskId = task._id.toString();
       const node = createNode(
-        task._id.toString(),
+        taskId,
         task.pinName ?? task.pinCode,
         "task",
+        parent.id,
+        "drawing",
         parent.projectId,
-        parent.projectRole
+        parent.projectRole,
+        0,
+        {
+          metadata: {
+            buildingId: task.buildingId ? task.buildingId.toString() : undefined,
+            floorId: task.floorId ? task.floorId.toString() : undefined,
+            disciplineId: task.disciplineId ? task.disciplineId.toString() : undefined,
+            drawingId: task.drawingId.toString(),
+            taskId,
+            pinCode: task.pinCode,
+            status: task.status,
+            category: task.category,
+            tagNames: task.tagNames || []
+          }
+        }
       );
-      parent.children.push(node);
+      nodes.push(node);
     });
 
-    const tree = Array.from(projectMap.values());
-    sortTree(tree);
-    return sendSuccess(res, tree);
+    return sendSuccess(res, orderFlatNodes(nodes));
   })
 );
 
@@ -289,7 +346,10 @@ router.post(
         "admin",
         "Khong co quyen"
       );
-      siblings = await DrawingModel.find({ disciplineId: current.disciplineId }).sort({ sortIndex: 1, createdAt: 1 });
+      siblings = await DrawingModel.find({
+        projectId: current.projectId,
+        $or: [{ isLatestVersion: true }, { isLatestVersion: { $exists: false } }]
+      }).sort({ sortIndex: 1, createdAt: 1 });
     }
 
     if (siblings.length < 2) {
@@ -347,6 +407,55 @@ router.post(
         description: current!.description,
         sortIndex
       });
+
+      // Deep clone structure only: building -> floor -> discipline.
+      // Do not clone drawings/tasks to avoid noisy copied data.
+      const [sourceBuildings, sourceFloors, sourceDisciplines] = await Promise.all([
+        BuildingModel.find({ projectId: current!._id }).sort({ sortIndex: 1, createdAt: 1 }),
+        FloorModel.find({ projectId: current!._id }).sort({ sortIndex: 1, createdAt: 1 }),
+        DisciplineModel.find({ projectId: current!._id }).sort({ sortIndex: 1, createdAt: 1 })
+      ]);
+
+      const buildingIdMap = new Map<string, string>();
+      for (const source of sourceBuildings) {
+        const cloned = await BuildingModel.create({
+          projectId: duplicated._id,
+          name: source.name,
+          code: source.code,
+          sortIndex: source.sortIndex ?? 0
+        });
+        buildingIdMap.set(source._id.toString(), cloned._id.toString());
+      }
+
+      const floorIdMap = new Map<string, string>();
+      for (const source of sourceFloors) {
+        const clonedBuildingId = buildingIdMap.get(source.buildingId.toString());
+        if (!clonedBuildingId) continue;
+        const cloned = await FloorModel.create({
+          projectId: duplicated._id,
+          buildingId: clonedBuildingId,
+          name: source.name,
+          code: source.code,
+          level: source.level,
+          sortIndex: source.sortIndex ?? 0
+        });
+        floorIdMap.set(source._id.toString(), cloned._id.toString());
+      }
+
+      for (const source of sourceDisciplines) {
+        const clonedBuildingId = buildingIdMap.get(source.buildingId.toString());
+        const clonedFloorId = floorIdMap.get(source.floorId.toString());
+        if (!clonedBuildingId || !clonedFloorId) continue;
+        await DisciplineModel.create({
+          projectId: duplicated._id,
+          buildingId: clonedBuildingId,
+          floorId: clonedFloorId,
+          name: source.name,
+          code: source.code,
+          sortIndex: source.sortIndex ?? 0
+        });
+      }
+
       return sendSuccess(res, duplicated, {}, 201);
     }
 
@@ -427,15 +536,37 @@ router.post(
     );
 
     const name = toCopyName(current.name);
-    const sortIndex = await getNextSortIndex(DrawingModel, { disciplineId: current.disciplineId });
+    const sortIndex = await getNextSortIndex(DrawingModel, { projectId: current.projectId });
+    let drawingCode = `${current.drawingCode}-COPY`;
+    let copyCounter = 2;
+    while (
+      await DrawingModel.exists({
+        projectId: current.projectId,
+        drawingCode,
+        $or: [{ isLatestVersion: true }, { isLatestVersion: { $exists: false } }]
+      })
+    ) {
+      drawingCode = `${current.drawingCode}-COPY-${copyCounter}`;
+      copyCounter += 1;
+    }
+    const duplicatedOriginalName = buildStandardizedDrawingFileName(
+      drawingCode,
+      current.mimeType,
+      current.originalName
+    );
     const duplicated = await DrawingModel.create({
       projectId: current.projectId,
       buildingId: current.buildingId,
       floorId: current.floorId,
       disciplineId: current.disciplineId,
       name,
+      drawingCode,
+      versionIndex: 1,
+      isLatestVersion: true,
+      parsedMetadata: current.parsedMetadata,
+      tagNames: current.tagNames,
       sortIndex,
-      originalName: current.originalName,
+      originalName: duplicatedOriginalName,
       storageKey: current.storageKey,
       mimeType: current.mimeType,
       size: current.size

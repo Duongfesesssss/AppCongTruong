@@ -15,6 +15,23 @@ export const createPhotoSchema = z.object({
   })
 });
 
+export const createBulkPhotoSchema = z.object({
+  body: z.object({
+    taskId: objectIdSchema,
+    name: z.string().optional(),
+    description: z.string().optional(),
+    location: z.string().optional(),
+    category: z.enum(["fire_protection", "quality", "safety", "progress", "other"]).optional(),
+    measuredBy: z.string().optional()
+  })
+});
+
+export const bulkPhotoJobIdSchema = z.object({
+  params: z.object({
+    jobId: z.string().uuid()
+  })
+});
+
 export const photoIdSchema = z.object({
   params: z.object({
     id: objectIdSchema

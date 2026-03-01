@@ -72,13 +72,13 @@ export const useApi = () => {
     offlineSync.init().catch(() => undefined);
   }
 
-  // Doc truc tiep tu useState de tranh circular dependency voi useAuth
+  // Đọc trực tiếp từ useState để tránh circular dependency với useAuth
   const token = useState<string | null>("auth-token", () => null);
   const user = useState<unknown | null>("auth-user", () => null);
   const sessionWarningAt = useState<number>("auth-session-warning-at", () => 0);
   const toast = process.client ? useToast() : null;
 
-  // Tranh goi refresh nhieu lan cung luc
+  // Tránh gọi refresh nhiều lần cùng lúc
   let refreshPromise: Promise<boolean> | null = null;
 
   const getCacheUserScope = () => {
@@ -124,7 +124,7 @@ export const useApi = () => {
     try {
       const res = await fetch(`${config.public.apiBase}/auth/refresh`, {
         method: "POST",
-        credentials: "include", // Gui httpOnly cookie chua refresh token
+        credentials: "include", // Gửi httpOnly cookie chứa refresh token
         headers: { "Content-Type": "application/json" }
       });
       const data = await res.json();
@@ -172,10 +172,10 @@ export const useApi = () => {
     idempotencyKey: string
   ) => {
     if (!offlineSync) {
-      throw new Error("Khong the luu tam thao tac offline");
+      throw new Error("Không thể lưu tạm thao tác offline");
     }
     const queued = await offlineSync.enqueueRequest(method, path, body, idempotencyKey);
-    toast?.push("Mat mang: thao tac da luu tam va se tu dong bo", "info");
+    toast?.push("Mất mạng: thao tác đã lưu tạm và sẽ tự đồng bộ", "info");
     return buildOfflineQueuedResponse(method, queued) as T;
   };
 
@@ -206,7 +206,7 @@ export const useApi = () => {
       if (cached !== null) {
         return cached;
       }
-      throw new Error("Ban dang offline va chua co du lieu da luu tren may.");
+      throw new Error("Bạn đang offline và chưa có dữ liệu đã lưu trên máy.");
     }
 
     if (canQueue && offlineSync && !offlineSync.isOnline.value) {
@@ -226,7 +226,7 @@ export const useApi = () => {
       isTokenNearExpiry(token.value, 90_000)
     ) {
       if (process.client && Date.now() - sessionWarningAt.value > 60_000) {
-        toast?.push("Phien dang nhap sap het han, he thong dang tu gia han", "info");
+        toast?.push("Phiên đăng nhập sắp hết hạn, hệ thống đang tự gia hạn", "info");
         sessionWarningAt.value = Date.now();
       }
 
@@ -238,7 +238,7 @@ export const useApi = () => {
       const refreshed = await refreshPromise;
       if (!refreshed) {
         logoutClient();
-        throw new Error("Phien dang nhap da het han");
+        throw new Error("Phiên đăng nhập đã hết hạn");
       }
     }
 
@@ -276,9 +276,9 @@ export const useApi = () => {
         const code = isApiFailure(payload) ? payload.error.code : "";
         const message = isApiFailure(payload)
           ? payload.error.message
-          : `Yeu cau that bai (${response.status})`;
+          : `Yêu cầu thất bại (${response.status})`;
 
-        // Neu 401 va chua retry -> thu refresh token roi goi lai
+        // Nếu 401 và chưa retry -> thử refresh token rồi gọi lại
         if (code === "UNAUTHORIZED" && !_isRetry && path !== "/auth/refresh") {
           if (!refreshPromise) {
             refreshPromise = tryRefreshToken().finally(() => {
@@ -289,7 +289,7 @@ export const useApi = () => {
           if (refreshed) {
             return request<T>(method, path, body, true);
           }
-          // Refresh that bai -> logout
+          // Refresh thất bại -> logout
           logoutClient();
         }
         throw new Error(message);
@@ -329,7 +329,7 @@ export const useApi = () => {
         throw new Error("Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.");
       }
 
-      const message = (err as Error).message || "Co loi xay ra";
+      const message = (err as Error).message || "Có lỗi xảy ra";
       throw new Error(message);
     }
   };

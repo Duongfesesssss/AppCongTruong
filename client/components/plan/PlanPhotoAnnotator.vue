@@ -394,7 +394,7 @@ const handleSave = async () => {
       annotations: annotations.value
     });
     if (isOfflineQueuedResponse(result)) {
-      toast.push("Da luu tam chu thich, se dong bo khi co mang", "info");
+      toast.push("Đã lưu tạm chú thích, sẽ đồng bộ khi có mạng", "info");
     } else {
       toast.push("Đã lưu chú thích đo đạc", "success");
       emit("saved");

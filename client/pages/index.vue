@@ -17,9 +17,22 @@
 
     <!-- Drawing View -->
     <template v-if="selected?.type === 'drawing'">
-      <section class="rounded-xl sm:rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section class="relative z-0 mb-4 rounded-xl border border-slate-200 bg-white shadow-sm sm:mb-6 sm:rounded-2xl">
         <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 sm:px-4 py-2 sm:py-3">
-          <h3 class="text-sm sm:text-base font-semibold text-slate-900">Bản vẽ</h3>
+          <div class="flex min-w-0 items-center gap-2">
+            <h3 class="text-sm sm:text-base font-semibold text-slate-900">Bản vẽ</h3>
+            <select
+              v-if="drawingVersions.length > 1"
+              v-model="activeDrawingId"
+              class="h-8 max-w-[190px] rounded-md border border-slate-200 bg-white px-2 text-[11px] text-slate-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-400/20 sm:h-9 sm:text-xs"
+              :disabled="loading"
+              @change="handleDrawingVersionChange"
+            >
+              <option v-for="version in drawingVersions" :key="version._id" :value="version._id">
+                Index {{ version.versionIndex }}{{ version.isLatestVersion ? " (Latest)" : "" }}
+              </option>
+            </select>
+          </div>
           <div class="flex items-center gap-1.5 sm:gap-2">
             <!-- Nút tải tất cả ảnh trong bản vẽ -->
             <button
@@ -45,7 +58,7 @@
             </button>
             <!-- Nút thêm Task (bật chế độ đặt pin) -->
             <button
-              v-if="canManageStructure"
+              v-if="canManageTasks"
               class="flex items-center gap-1 rounded-lg border px-2 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium"
               :class="placingPin
                 ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
@@ -60,30 +73,68 @@
             </button>
           </div>
         </div>
+        <div
+          v-if="drawingVersions.length > 1"
+          class="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/70 px-3 py-2 sm:px-4"
+        >
+          <select
+            v-model="compareDrawingId"
+            class="h-8 rounded-md border border-slate-200 bg-white px-2 text-[11px] text-slate-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-400/20 sm:text-xs"
+          >
+            <option value="">Không so sánh</option>
+            <option v-for="version in compareCandidates" :key="version._id" :value="version._id">
+              So sánh với Index {{ version.versionIndex }}
+            </option>
+          </select>
+          <select
+            v-model="compareBlendMode"
+            class="h-8 rounded-md border border-slate-200 bg-white px-2 text-[11px] text-slate-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-400/20 sm:text-xs"
+            :disabled="!compareDrawingId"
+          >
+            <option value="difference">Difference</option>
+            <option value="multiply">Multiply</option>
+            <option value="normal">Normal</option>
+          </select>
+          <label class="flex items-center gap-2 text-[11px] text-slate-600 sm:text-xs">
+            Opacity
+            <input
+              v-model.number="compareOpacityPercent"
+              type="range"
+              min="10"
+              max="100"
+              :disabled="!compareDrawingId"
+            />
+            {{ compareOpacityPercent }}%
+          </label>
+        </div>
         <PlanViewer
           :drawing="drawing"
+          :compare-drawing-id="compareDrawingId || undefined"
+          :compare-blend-mode="compareBlendMode"
+          :compare-opacity="compareOpacity"
           :pins="pins"
           :zones="zones"
           :loading="loading"
           :error="error"
           :placing-pin="placingPin"
           :selected-pin-id="selectedTask?._id"
-          :can-edit-pins="canManageStructure"
+          :can-edit-pins="canManageTasks"
           @pin-click="handlePinClick"
           @zone-click="handleZoneClick"
           @place-pin="handlePlacePin"
           @pin-move="handlePinMove"
+          @view-state="handleViewState"
           @cancel-place="placingPin = false"
         />
       </section>
 
       <!-- Layout 2 cột: Task List + Task Detail -->
-      <div class="grid gap-4 sm:gap-6" :class="selectedTask ? 'lg:grid-cols-2' : ''">
+      <div class="relative z-10 grid gap-4 sm:gap-6" :class="selectedTask ? 'lg:grid-cols-2' : ''">
         <!-- Tasks List -->
         <section class="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
           <h3 class="text-sm sm:text-base font-semibold text-slate-900">Danh sách Task ({{ pins.length }})</h3>
           <p v-if="pins.length === 0" class="mt-3 text-center text-xs sm:text-sm text-slate-400">
-            {{ canManageStructure
+            {{ canManageTasks
               ? 'Chưa có task nào. Bấm "Thêm Task" rồi nhấn vào bản vẽ để tạo.'
               : 'Chưa có task nào trong bản vẽ này.' }}
           </p>
@@ -133,7 +184,8 @@
           <TaskDetail
             :task-id="selectedTask._id || selectedTask.id"
             :task-data="selectedTask"
-            :can-delete-photo="canManageStructure"
+            :can-delete-photo="canManageTasks"
+            :can-edit-task="canManageTasks"
             @updated="reloadDrawingData"
           />
         </section>
@@ -142,7 +194,12 @@
 
     <!-- Task Detail View (khi chọn từ tree) -->
     <template v-else-if="selected?.type === 'task'">
-      <TaskDetail :task-id="selected.id" :can-delete-photo="canManageStructure" @updated="reloadTask" />
+      <TaskDetail
+        :task-id="selected.id"
+        :can-delete-photo="canManageTasks"
+        :can-edit-task="canManageTasks"
+        @updated="reloadTask"
+      />
     </template>
 
     <!-- Empty State -->
@@ -162,7 +219,7 @@
     <CreateForm
       :show="showTaskCreator"
       type="task"
-      :parent-id="selected?.id"
+      :parent-id="activeDrawingId || selected?.id"
       :initial-pin-x="pendingPinCoords?.pinX"
       :initial-pin-y="pendingPinCoords?.pinY"
       @close="closeTaskCreator"
@@ -179,24 +236,41 @@ import {
   useApi
 } from "~/composables/api/useApi";
 import { useOfflineSync } from "~/composables/state/useOfflineSync";
+import { usePlanViewState } from "~/composables/state/usePlanViewState";
 import { useToast } from "~/composables/state/useToast";
+import { useDeepLinkFocus } from "~/composables/state/useDeepLinkFocus";
 
 const selected = useSelectedNode();
 const api = useApi();
 const offlineSync = useOfflineSync();
 const toast = useToast();
+const planViewState = usePlanViewState();
+const { pending: pendingDeepLink } = useDeepLinkFocus();
 const config = useRuntimeConfig();
 const token = useState<string | null>("auth-token", () => null);
 
 const drawing = ref<Record<string, unknown> | null>(null);
 const pins = ref<any[]>([]);
 const zones = ref<any[]>([]);
+const drawingVersions = ref<any[]>([]);
+const activeDrawingId = ref<string>("");
+const compareDrawingId = ref<string>("");
+const compareBlendMode = ref<"difference" | "multiply" | "normal">("difference");
+const compareOpacityPercent = ref(55);
 const selectedTask = ref<any>(null);
 const downloadingDrawingImages = ref(false);
+const pendingTaskSelectionId = ref<string>("");
 
 const loading = ref(false);
 const error = ref("");
-const canManageStructure = computed(() => selected.value?.canManageStructure === true);
+const canManageTasks = computed(() => {
+  const role = selected.value?.projectRole;
+  return role === "admin" || role === "technician";
+});
+const compareOpacity = computed(() => compareOpacityPercent.value / 100);
+const compareCandidates = computed(() =>
+  drawingVersions.value.filter((item) => item?._id && item._id !== activeDrawingId.value)
+);
 
 // Pin placement
 const placingPin = ref(false);
@@ -255,26 +329,61 @@ const syncSelectedTaskWithPins = (nextPins: any[]) => {
   selectedTask.value = matchedTask || null;
 };
 
-// Load drawing data khi chọn drawing
-const loadDrawingData = async (node: SelectedNode | null) => {
-  if (!node || node.type !== "drawing") {
+const resolveTaskById = (taskId: string) => {
+  return pins.value.find((pin) => {
+    const currentPinId = pin?._id || pin?.id;
+    return currentPinId === taskId;
+  });
+};
+
+const tryApplyPendingTaskSelection = () => {
+  if (!pendingTaskSelectionId.value) return;
+  if (selected.value?.type !== "drawing") return;
+
+  const matchedTask = resolveTaskById(pendingTaskSelectionId.value);
+  if (!matchedTask) return;
+
+  selectedTask.value = matchedTask;
+  pendingTaskSelectionId.value = "";
+};
+
+// Load drawing data theo drawing id đang active (hỗ trợ version dropdown)
+const loadDrawingDataById = async (drawingId: string) => {
+  if (!drawingId) {
     drawing.value = null;
     pins.value = [];
     zones.value = [];
+    drawingVersions.value = [];
     return;
   }
 
   loading.value = true;
   error.value = "";
   try {
-    const [drawingData, tasksData, zonesData] = await Promise.all([
-      api.get<Record<string, unknown>>(`/drawings/${node.id}`),
-      api.get<any[]>(`/tasks?drawingId=${node.id}`),
-      api.get<any[]>(`/drawings/${node.id}/zones`)
+    const [drawingData, tasksData, zonesData, versionsData] = await Promise.all([
+      api.get<Record<string, unknown>>(`/drawings/${drawingId}`),
+      api.get<any[]>(`/tasks?drawingId=${drawingId}`),
+      api.get<any[]>(`/drawings/${drawingId}/zones`),
+      api.get<any[]>(`/drawings/${drawingId}/versions`)
     ]);
     drawing.value = drawingData;
     pins.value = tasksData || [];
     zones.value = zonesData || [];
+    drawingVersions.value = versionsData || [];
+    if (!activeDrawingId.value && drawingId) {
+      activeDrawingId.value = drawingId;
+    }
+    const hasActiveVersion = drawingVersions.value.some((item) => item?._id === activeDrawingId.value);
+    if (!hasActiveVersion && drawingVersions.value.length > 0) {
+      activeDrawingId.value = drawingVersions.value[0]._id;
+    }
+    if (compareDrawingId.value && compareDrawingId.value === activeDrawingId.value) {
+      compareDrawingId.value = "";
+    }
+    if (compareDrawingId.value && !drawingVersions.value.some((item) => item?._id === compareDrawingId.value)) {
+      compareDrawingId.value = "";
+    }
+    tryApplyPendingTaskSelection();
     syncSelectedTaskWithPins(pins.value);
   } catch (err) {
     error.value = (err as Error).message;
@@ -283,23 +392,47 @@ const loadDrawingData = async (node: SelectedNode | null) => {
   }
 };
 
-const reloadDrawingData = async () => {
-  if (selected.value?.type === "drawing") {
-    await loadDrawingData(selected.value);
+const loadDrawingData = async (node: SelectedNode | null) => {
+  if (!node || node.type !== "drawing") {
+    drawing.value = null;
+    pins.value = [];
+    zones.value = [];
+    drawingVersions.value = [];
+    activeDrawingId.value = "";
+    compareDrawingId.value = "";
+    planViewState.value = { updatedAt: Date.now() };
+    return;
   }
+  activeDrawingId.value = node.id;
+  await loadDrawingDataById(node.id);
+};
+
+const reloadDrawingData = async () => {
+  if (selected.value?.type !== "drawing" || !activeDrawingId.value) return;
+  await loadDrawingDataById(activeDrawingId.value);
+};
+
+const handleDrawingVersionChange = async () => {
+  if (!activeDrawingId.value) return;
+  if (compareDrawingId.value === activeDrawingId.value) {
+    compareDrawingId.value = "";
+  }
+  selectedTask.value = null;
+  placingPin.value = false;
+  await loadDrawingDataById(activeDrawingId.value);
 };
 
 // Reload chỉ tasks + zones (không load lại drawing → tránh reload PDF)
 const reloadTasksOnly = async () => {
-  const node = selected.value;
-  if (!node || node.type !== "drawing") return;
+  if (selected.value?.type !== "drawing" || !activeDrawingId.value) return;
   try {
     const [tasksData, zonesData] = await Promise.all([
-      api.get<any[]>(`/tasks?drawingId=${node.id}`),
-      api.get<any[]>(`/drawings/${node.id}/zones`)
+      api.get<any[]>(`/tasks?drawingId=${activeDrawingId.value}`),
+      api.get<any[]>(`/drawings/${activeDrawingId.value}/zones`)
     ]);
     pins.value = tasksData || [];
     zones.value = zonesData || [];
+    tryApplyPendingTaskSelection();
     syncSelectedTaskWithPins(pins.value);
   } catch {
     // Lỗi nhẹ, không cần hiển thị
@@ -307,8 +440,7 @@ const reloadTasksOnly = async () => {
 };
 
 const downloadDrawingImages = async () => {
-  const node = selected.value;
-  if (!node || node.type !== "drawing") {
+  if (selected.value?.type !== "drawing" || !activeDrawingId.value) {
     toast.push("Vui lòng chọn bản vẽ", "info");
     return;
   }
@@ -320,7 +452,7 @@ const downloadDrawingImages = async () => {
       : `${window.location.origin}${config.public.apiBase}`;
 
     const url = new URL(`${baseUrl}/reports/export-images`);
-    url.searchParams.set("drawingId", node.id);
+    url.searchParams.set("drawingId", activeDrawingId.value);
     if (token.value) {
       url.searchParams.set("token", token.value);
     }
@@ -344,7 +476,7 @@ const downloadDrawingImages = async () => {
     }
 
     const blob = await response.blob();
-    const safeName = (node.name || "drawing")
+    const safeName = (drawing.value?.name || selected.value?.name || "drawing")
       .toString()
       .normalize("NFKD")
       .replace(/[\u0300-\u036f]/g, "")
@@ -372,8 +504,8 @@ const downloadDrawingImages = async () => {
 
 // === Pin Placement Flow ===
 const togglePlacement = () => {
-  if (!canManageStructure.value) {
-    toast.push("Tai khoan ky thuat vien khong co quyen quan ly task/pin", "info");
+  if (!canManageTasks.value) {
+    toast.push("Tài khoản kỹ thuật viên không có quyền quản lý task/pin", "info");
     return;
   }
   if (placingPin.value) {
@@ -385,7 +517,7 @@ const togglePlacement = () => {
 };
 
 const handlePlacePin = (coords: { pinX: number; pinY: number }) => {
-  if (!canManageStructure.value) return;
+  if (!canManageTasks.value) return;
   // Nhận toạ độ từ PlanViewer → mở form tạo task
   pendingPinCoords.value = coords;
   showTaskCreator.value = true;
@@ -412,11 +544,11 @@ const handleTaskCreated = async (createdData: unknown) => {
       if (!alreadyExists) {
         const offlineTask = {
           _id: offlineTaskId,
-          drawingId: draft.drawingId || selected.value.id,
+          drawingId: draft.drawingId || activeDrawingId.value || selected.value.id,
           pinName: draft.pinName || "",
           roomName: draft.roomName || "",
           description: draft.description || "",
-          status: draft.status || "open",
+          status: draft.status || "instruction",
           category: draft.category || "quality",
           pinX: typeof draft.pinX === "number" ? draft.pinX : fallbackPinX,
           pinY: typeof draft.pinY === "number" ? draft.pinY : fallbackPinY,
@@ -428,7 +560,7 @@ const handleTaskCreated = async (createdData: unknown) => {
         selectedTask.value = offlineTask;
       }
     }
-    toast.push("Task da luu tam va mo duoc de lam viec offline. He thong se dong bo khi co mang.", "info");
+    toast.push("Task đã lưu tạm và mở được để làm việc offline. Hệ thống sẽ đồng bộ khi có mạng.", "info");
     return;
   }
   await reloadTasksOnly();
@@ -436,8 +568,8 @@ const handleTaskCreated = async (createdData: unknown) => {
 
 // === Pin Move (kéo thả pin) ===
 const handlePinMove = async (data: { pinId: string; pinX: number; pinY: number }) => {
-  if (!canManageStructure.value) {
-    toast.push("Tai khoan ky thuat vien khong co quyen di chuyen pin", "info");
+  if (!canManageTasks.value) {
+    toast.push("Tài khoản kỹ thuật viên không có quyền di chuyển pin", "info");
     return;
   }
   // Optimistic update: cập nhật vị trí pin ngay trên UI
@@ -456,7 +588,7 @@ const handlePinMove = async (data: { pinId: string; pinX: number; pinY: number }
       pinY: data.pinY
     });
     if (isOfflineQueuedResponse(result)) {
-      toast.push("Da luu tam vi tri pin. Se dong bo khi co mang.", "info");
+      toast.push("Đã lưu tạm vị trí pin. Sẽ đồng bộ khi có mạng.", "info");
     } else {
       toast.push("Đã di chuyển pin", "success");
     }
@@ -479,13 +611,24 @@ const handleZoneClick = (zone: any) => {
   toast.push(`Zone: ${zone._id || zone.id}`, "info");
 };
 
+const handleViewState = (state: { drawingId: string; centerX: number; centerY: number; zoom: number }) => {
+  planViewState.value = {
+    drawingId: state.drawingId,
+    taskId: selectedTask.value?._id || selectedTask.value?.id,
+    centerX: state.centerX,
+    centerY: state.centerY,
+    zoom: state.zoom,
+    updatedAt: Date.now()
+  };
+};
+
 const selectTask = (pin: any) => {
   selectedTask.value = pin;
 };
 
 const reloadTask = async () => {
-  if (selected.value?.type === "drawing") {
-    await loadDrawingData(selected.value);
+  if (selected.value?.type === "drawing" && activeDrawingId.value) {
+    await loadDrawingDataById(activeDrawingId.value);
   }
 };
 
@@ -498,33 +641,68 @@ watch(
   }
 );
 
+watch(
+  () => selectedTask.value?._id || selectedTask.value?.id || "",
+  (taskId) => {
+    if (!planViewState.value?.drawingId) return;
+    planViewState.value = {
+      ...planViewState.value,
+      taskId: taskId || undefined,
+      updatedAt: Date.now()
+    };
+  }
+);
+
+watch(
+  () => pendingDeepLink.value?.requestedAt,
+  () => {
+    const focus = pendingDeepLink.value;
+    if (!focus?.taskId) return;
+    pendingTaskSelectionId.value = focus.taskId;
+    tryApplyPendingTaskSelection();
+  },
+  { immediate: true }
+);
+
 // Status helpers
 const statusColor = (status: string) => {
   const colors: Record<string, string> = {
-    open: "bg-blue-500",
+    instruction: "bg-slate-500",
+    rfi: "bg-amber-500",
+    resolved: "bg-blue-500",
+    approved: "bg-emerald-500",
+    open: "bg-slate-500",
     in_progress: "bg-amber-500",
-    blocked: "bg-rose-500",
-    done: "bg-emerald-500"
+    blocked: "bg-amber-600",
+    done: "bg-blue-500"
   };
   return colors[status] || "bg-slate-400";
 };
 
 const statusBadge = (status: string) => {
   const badges: Record<string, string> = {
-    open: "bg-blue-100 text-blue-700",
+    instruction: "bg-slate-100 text-slate-700",
+    rfi: "bg-amber-100 text-amber-700",
+    resolved: "bg-blue-100 text-blue-700",
+    approved: "bg-emerald-100 text-emerald-700",
+    open: "bg-slate-100 text-slate-700",
     in_progress: "bg-amber-100 text-amber-700",
-    blocked: "bg-rose-100 text-rose-700",
-    done: "bg-emerald-100 text-emerald-700"
+    blocked: "bg-amber-100 text-amber-700",
+    done: "bg-blue-100 text-blue-700"
   };
   return badges[status] || "bg-slate-100 text-slate-600";
 };
 
 const statusLabel = (status: string) => {
   const labels: Record<string, string> = {
-    open: "Mở",
-    in_progress: "Đang làm",
-    blocked: "Chặn",
-    done: "Xong"
+    instruction: "Hướng dẫn",
+    rfi: "RFI",
+    resolved: "Đã hoàn thành",
+    approved: "Đã QA duyệt",
+    open: "Hướng dẫn",
+    in_progress: "RFI",
+    blocked: "RFI",
+    done: "Đã hoàn thành"
   };
   return labels[status] || status;
 };

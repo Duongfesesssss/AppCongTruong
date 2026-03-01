@@ -3,7 +3,7 @@
     <div class="flex items-center justify-between border-b border-slate-100 px-4 py-4 sm:px-6">
       <div class="min-w-0">
         <h2 class="text-base font-semibold text-slate-900">Cây Dự Án</h2>
-        <p class="hidden text-xs text-slate-400 sm:block">Project → Building → Floor → Discipline → Drawing → Task</p>
+        <p class="hidden text-xs text-slate-400 sm:block">Flat Structure + Metadata</p>
       </div>
       <!-- Nút đóng sidebar trên mobile -->
       <button
@@ -35,7 +35,7 @@
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v6m3-3h-6M5 20h6a2 2 0 002-2v-1a4 4 0 00-4-4H7a4 4 0 00-4 4v1a2 2 0 002 2zm9-10a4 4 0 100-8 4 4 0 000 8z" />
         </svg>
-        Quan ly thanh vien
+        Quản lý thành viên
       </button>
     </div>
 
@@ -50,12 +50,14 @@
       <div v-else-if="error" class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-600">
         {{ error }}
       </div>
-      <div v-else-if="tree.length === 0" class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-xs text-slate-500">
+      <div v-else-if="rootIds.length === 0" class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-xs text-slate-500">
         Chưa có project nào.<br />Bấm nút "Tạo Project" để bắt đầu.
       </div>
       <TreeView
         v-else
-        :nodes="tree"
+        :root-ids="rootIds"
+        :node-map="nodeMap"
+        :children-by-parent-id="childrenByParentId"
         :selected-id="selected?.id"
         @select="handleSelect"
         @add-child="handleAddChild"
@@ -116,7 +118,7 @@ const emit = defineEmits<{
   navigate: [];
 }>();
 
-const { tree, loading, error, fetchTree } = useProjectTree();
+const { rootIds, nodeMap, childrenByParentId, loading, error, fetchTree, getNodeById } = useProjectTree();
 const selected = useSelectedNode();
 const api = useApi();
 const toast = useToast();
@@ -137,16 +139,9 @@ const currentProjectId = computed(() => {
 });
 const currentProjectName = computed(() => {
   if (!currentProjectId.value) return "";
-  const queue = [...tree.value];
-  while (queue.length > 0) {
-    const node = queue.shift();
-    if (!node) continue;
-    if (node.type === "project" && node.id === currentProjectId.value) {
-      return node.name;
-    }
-    if (node.children?.length) {
-      queue.push(...node.children);
-    }
+  const projectNode = getNodeById(currentProjectId.value);
+  if (projectNode?.type === "project") {
+    return projectNode.name;
   }
   if (selected.value?.type === "project" && selected.value.id === currentProjectId.value) {
     return selected.value.name;
@@ -181,7 +176,9 @@ const handleSelect = (node: ProjectTreeNode) => {
     type: node.type,
     projectId: node.projectId,
     projectRole: node.projectRole,
-    canManageStructure: node.canManageStructure
+    canManageStructure: node.canManageStructure,
+    drawingCode: node.drawingCode,
+    versionIndex: node.versionIndex
   } as SelectedNode;
   emit("navigate");
 };
@@ -306,7 +303,7 @@ const closeCreateForm = () => {
 };
 
 const handleCreated = () => {
-  // Tree se tu dong refresh trong CreateForm
+  // Tree sẽ tự động refresh trong CreateForm
 };
 
 onMounted(fetchTree);

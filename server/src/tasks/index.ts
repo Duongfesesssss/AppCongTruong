@@ -10,18 +10,86 @@ import { createOrUpdateTaskSchema, listTaskSchema, taskIdSchema } from "./task.s
 import { DrawingModel } from "../drawings/drawing.model";
 import { ProjectModel } from "../projects/project.model";
 import { buildProjectAccessFilter, ensureProjectRole } from "../projects/project-access";
-import { BuildingModel } from "../buildings/building.model";
-import { FloorModel } from "../floors/floor.model";
-import { DisciplineModel } from "../disciplines/discipline.model";
 import { PhotoModel } from "../photos/photo.model";
 import { ZoneModel } from "../zones/zone.model";
 import { formatPinCode, sanitizeText, toCode } from "../lib/utils";
+import type { TaskCategory, TaskStatus } from "../lib/constants";
+import { createAndPublishNotifications } from "../notifications/service";
+import { UserModel } from "../users/user.model";
 
 const router = Router();
 
 const sanitizeOptional = (value?: string) => (value ? sanitizeText(value) : undefined);
 const sanitizeNotes = (notes?: string[]) => notes?.map((note) => sanitizeText(note)) ?? undefined;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const normalizeTagName = (value: string) => {
+  return sanitizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9.:-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+};
+const sanitizeTagNames = (tagNames?: string[]) => {
+  const normalized = (tagNames || [])
+    .map((tagName) => normalizeTagName(tagName))
+    .filter(Boolean);
+  return Array.from(new Set(normalized));
+};
+const mentionRegex = /@([a-zA-Z0-9._-]{2,64})/g;
+const stripDiacritics = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const normalizeMentionValue = (value: string) => stripDiacritics(value).toLowerCase().replace(/\s+/g, "");
+
+const extractMentionTokens = (content: string) => {
+  const tokens = new Set<string>();
+  const normalizedContent = content.trim();
+  mentionRegex.lastIndex = 0;
+  let matched = mentionRegex.exec(normalizedContent);
+  while (matched) {
+    tokens.add(normalizeMentionValue(matched[1]));
+    matched = mentionRegex.exec(normalizedContent);
+  }
+  return Array.from(tokens);
+};
+
+const resolveTaskMentionRecipientIds = async (project: any, actorUserId: string, mentionText: string) => {
+  const mentionTokens = extractMentionTokens(mentionText);
+  if (mentionTokens.length === 0) return [];
+
+  const userIds = new Set<string>();
+  userIds.add(project.userId.toString());
+  project.members?.forEach((member: any) => userIds.add(member.userId.toString()));
+
+  const users = await UserModel.find({ _id: { $in: Array.from(userIds) } }).select("_id name email").lean();
+  return users
+    .filter((user) => {
+      const nameToken = normalizeMentionValue(user.name || "");
+      const emailToken = normalizeMentionValue(user.email?.split("@")[0] || "");
+      return mentionTokens.includes(nameToken) || mentionTokens.includes(emailToken);
+    })
+    .map((user) => user._id.toString())
+    .filter((userId) => userId !== actorUserId);
+};
+
+const taskStatusLabelMap: Record<string, string> = {
+  instruction: "Hướng dẫn",
+  rfi: "RFI",
+  resolved: "Đã hoàn thành",
+  approved: "Đã QA duyệt",
+  open: "Mở",
+  in_progress: "Đang làm",
+  blocked: "Cần xử lý",
+  done: "Xong"
+};
+
+const getTaskStatusLabel = (status?: string) => taskStatusLabelMap[status || ""] || status || "Không xác định";
+
+const getProjectRecipientUserIds = (project: any, actorUserId: string) => {
+  const uniqueUserIds = new Set<string>();
+  uniqueUserIds.add(project.userId.toString());
+  project.members?.forEach((member: any) => uniqueUserIds.add(member.userId.toString()));
+
+  uniqueUserIds.delete(actorUserId);
+  return Array.from(uniqueUserIds);
+};
 
 router.post(
   "/",
@@ -33,12 +101,14 @@ router.post(
       drawingId?: string;
       pinX?: number;
       pinY?: number;
-      status?: "open" | "in_progress" | "blocked" | "done";
-      category?: "quality" | "safety" | "progress" | "fire_protection" | "other";
+      status?: TaskStatus;
+      category?: TaskCategory;
       description?: string;
+      mentionText?: string;
       roomName?: string;
       pinName?: string;
       gewerk?: string;
+      tagNames?: string[];
       notes?: string[];
     };
 
@@ -46,13 +116,11 @@ router.post(
       const task = await TaskModel.findById(body.id);
       if (!task) throw errors.notFound("Task không tồn tại");
 
-      // Check ownership through project
-      ensureProjectRole(
-        await ProjectModel.findById(task.projectId),
-        req.user!.id,
-        "admin",
-        "Task không tồn tại hoặc không có quyền"
-      );
+      const project = await ProjectModel.findById(task.projectId);
+      ensureProjectRole(project, req.user!.id, "technician", "Task không tồn tại hoặc không có quyền");
+
+      const oldStatus = task.status;
+      const mentionText = sanitizeOptional(body.mentionText);
 
       if (body.pinX !== undefined) task.pinX = body.pinX;
       if (body.pinY !== undefined) task.pinY = body.pinY;
@@ -76,9 +144,73 @@ router.post(
         task.pinName = sanitizeOptional(body.pinName);
       }
       if (body.gewerk !== undefined) task.gewerk = sanitizeOptional(body.gewerk);
-      if (body.notes) task.notes = sanitizeNotes(body.notes) ?? [];
+      if (body.tagNames !== undefined) task.tagNames = sanitizeTagNames(body.tagNames);
+      if (body.notes !== undefined) task.notes = sanitizeNotes(body.notes) ?? [];
+      if (mentionText) {
+        const nextNotes = [...(task.notes || []), mentionText];
+        task.notes = nextNotes.slice(-100);
+      }
 
       await task.save();
+
+      if (body.status && body.status !== oldStatus) {
+        if (project) {
+          const recipientUserIds = getProjectRecipientUserIds(project, req.user!.id);
+          if (recipientUserIds.length > 0) {
+            await createAndPublishNotifications(
+              recipientUserIds.map((recipientUserId) => ({
+                recipientUserId,
+                actorUserId: req.user!.id,
+                type: "task_status_changed",
+                title: "Task đã thay đổi trạng thái",
+                message: `${task.pinName || task.pinCode}: ${getTaskStatusLabel(oldStatus)} -> ${getTaskStatusLabel(
+                  task.status
+                )}`,
+                data: {
+                  taskId: task._id.toString(),
+                  drawingId: task.drawingId.toString(),
+                  oldStatus,
+                  newStatus: task.status,
+                  deepLink: {
+                    drawingId: task.drawingId.toString(),
+                    taskId: task._id.toString(),
+                    pinX: task.pinX,
+                    pinY: task.pinY,
+                    zoom: 1.8
+                  }
+                }
+              }))
+            );
+          }
+        }
+      }
+
+      if (mentionText && project) {
+        const mentionRecipientIds = await resolveTaskMentionRecipientIds(project, req.user!.id, mentionText);
+        if (mentionRecipientIds.length > 0) {
+          await createAndPublishNotifications(
+            mentionRecipientIds.map((recipientUserId) => ({
+              recipientUserId,
+              actorUserId: req.user!.id,
+              type: "mention",
+              title: "Bạn được nhắc tên trong task",
+              message: `${req.user!.name || req.user!.email}: ${mentionText.slice(0, 180)}`,
+              data: {
+                taskId: task._id.toString(),
+                drawingId: task.drawingId.toString(),
+                deepLink: {
+                  drawingId: task.drawingId.toString(),
+                  taskId: task._id.toString(),
+                  pinX: task.pinX,
+                  pinY: task.pinY,
+                  zoom: 2
+                }
+              }
+            }))
+          );
+        }
+      }
+
       return sendSuccess(res, task);
     }
 
@@ -89,14 +221,6 @@ router.post(
     // Check ownership through project
     const project = await ProjectModel.findById(drawing.projectId);
     ensureProjectRole(project, req.user!.id, "admin", "Drawing không tồn tại hoặc không có quyền");
-
-    const building = await BuildingModel.findById(drawing.buildingId);
-    const floor = await FloorModel.findById(drawing.floorId);
-    const discipline = await DisciplineModel.findById(drawing.disciplineId);
-
-    if (!building || !floor || !discipline) {
-      throw errors.notFound("Thiếu dữ liệu liên quan");
-    }
 
     const counter = await CounterModel.findOneAndUpdate(
       { _id: project!._id.toString() },
@@ -117,22 +241,27 @@ router.post(
     }
 
     const gewerkCode = toCode(body.gewerk ?? "NA", 2);
-    const pinCode = formatPinCode(project!.code, building.code, floor.code, gewerkCode, counter.seq);
+    const buildingCode = toCode(drawing.parsedMetadata?.buildingCode || "NA", 2);
+    const floorCode = toCode(drawing.parsedMetadata?.floorCode || "NA", 2);
+    const pinCode = formatPinCode(project!.code, buildingCode, floorCode, gewerkCode, counter.seq);
+    const drawingTags = sanitizeTagNames(drawing.tagNames || []);
+    const tagNames = sanitizeTagNames(body.tagNames ?? drawingTags);
 
     const task = await TaskModel.create({
       projectId: project!._id,
-      buildingId: building._id,
-      floorId: floor._id,
-      disciplineId: discipline._id,
+      buildingId: drawing.buildingId,
+      floorId: drawing.floorId,
+      disciplineId: drawing.disciplineId,
       drawingId: drawing._id,
       pinX: body.pinX as number,
       pinY: body.pinY as number,
-      status: body.status as "open" | "in_progress" | "blocked" | "done",
-      category: body.category as "quality" | "safety" | "progress" | "fire_protection" | "other",
+      status: body.status as TaskStatus,
+      category: body.category as TaskCategory,
       description: sanitizeOptional(body.description),
       roomName: sanitizeOptional(body.roomName),
       pinName: sanitizeOptional(body.pinName),
       gewerk: sanitizeOptional(body.gewerk),
+      tagNames,
       notes: sanitizeNotes(body.notes) ?? [],
       pinCode
     });
@@ -196,6 +325,14 @@ router.get(
     if (req.query.drawingId) filter.drawingId = req.query.drawingId;
     if (req.query.status) filter.status = req.query.status;
     if (req.query.category) filter.category = req.query.category;
+    if (req.query.tagName) {
+      filter.tagNames = normalizeTagName(String(req.query.tagName));
+    }
+    if (Array.isArray(req.query.tagNames) && req.query.tagNames.length > 0) {
+      filter.tagNames = {
+        $in: sanitizeTagNames(req.query.tagNames.map((value) => String(value)))
+      };
+    }
 
     const tasks = await TaskModel.find(filter).sort({ createdAt: -1 });
     return sendSuccess(res, tasks);
@@ -230,14 +367,13 @@ router.get(
     const project = await ProjectModel.findById(task.projectId);
     ensureProjectRole(project, req.user!.id, "technician", "Task không tồn tại hoặc không có quyền");
 
-    const [building, floor, discipline, drawing] = await Promise.all([
-      BuildingModel.findById(task.buildingId),
-      FloorModel.findById(task.floorId),
-      DisciplineModel.findById(task.disciplineId),
-      DrawingModel.findById(task.drawingId)
-    ]);
-
-    return sendSuccess(res, { task, project: project!, building, floor, discipline, drawing });
+    const drawing = await DrawingModel.findById(task.drawingId);
+    return sendSuccess(res, {
+      task,
+      project: project!,
+      drawing,
+      parsedMetadata: drawing?.parsedMetadata ?? null
+    });
   })
 );
 

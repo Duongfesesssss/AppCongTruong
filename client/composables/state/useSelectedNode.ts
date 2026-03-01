@@ -7,6 +7,8 @@ export type SelectedNode = {
   projectId?: string;
   projectRole?: ProjectRole;
   canManageStructure?: boolean;
+  drawingCode?: string;
+  versionIndex?: number;
 } | null;
 
 export const useSelectedNode = () => {
