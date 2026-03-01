@@ -168,17 +168,49 @@
           </div>
 
           <!-- Canvas area (flex-1 for full remaining height) -->
-          <div class="relative flex-1 touch-none overflow-hidden bg-white flex items-center justify-center">
+          <div class="relative flex flex-1 items-center justify-center overflow-hidden bg-white">
             <canvas
               ref="canvasRef"
-              class="cursor-crosshair"
-              :class="{ 'cursor-pointer': mode === 'select', 'cursor-move': mode === 'pan' }"
+              class="touch-none select-none cursor-crosshair"
+              :class="{
+                'cursor-pointer': mode === 'select',
+                'cursor-move': mode === 'pan',
+                'pointer-events-none opacity-50': !isCanvasInteractive
+              }"
               @pointerdown="handlePointerDown"
               @pointermove="handlePointerMove"
               @pointerup="handlePointerUp"
               @pointercancel="handlePointerUp"
               @wheel.prevent="handleWheel"
             ></canvas>
+
+            <div
+              v-if="isImageLoading"
+              class="absolute inset-0 flex items-center justify-center bg-white/90"
+            >
+              <div class="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm">
+                <svg class="h-4 w-4 animate-spin text-brand-500" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+                <span>Đang tải ảnh...</span>
+              </div>
+            </div>
+
+            <div
+              v-else-if="imageLoadError"
+              class="absolute inset-0 flex items-center justify-center bg-white/95 px-4"
+            >
+              <div class="max-w-sm rounded-lg border border-rose-200 bg-rose-50 p-4 text-center">
+                <p class="text-sm font-medium text-rose-700">{{ imageLoadError }}</p>
+                <button
+                  class="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 active:bg-rose-200"
+                  @click="retryLoadImage"
+                >
+                  Tải lại ảnh
+                </button>
+              </div>
+            </div>
 
             <!-- Zoom controls (fixed bottom-right) -->
             <div class="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg border border-slate-200 bg-white/90 p-1 shadow-sm backdrop-blur-sm sm:bottom-3 sm:right-3">
@@ -210,7 +242,10 @@
             </div>
 
             <!-- Instructions overlay -->
-            <div v-if="lines.length === 0" class="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div
+              v-if="isCanvasInteractive && !isImageLoading && !imageLoadError && lines.length === 0 && mode === 'draw'"
+              class="pointer-events-none absolute inset-0 flex items-center justify-center"
+            >
               <div class="rounded-lg bg-black/60 px-4 py-3 text-center text-sm text-white backdrop-blur-sm">
                 <p class="font-medium">Chạm và kéo để vẽ đường đo</p>
                 <p class="mt-1 text-xs opacity-75">Dùng 2 ngón để pinch zoom • Khoảng cách hiển thị tự động</p>
@@ -295,14 +330,28 @@ const emit = defineEmits<{
 const api = useApi();
 const toast = useToast();
 
+const resolveDefaultMode = (): "draw" | "pan" | "select" => {
+  if (!process.client) return "draw";
+  const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
+  if (coarsePointer || window.innerWidth < 768) {
+    return "pan";
+  }
+  return "draw";
+};
+
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const ctx = ref<CanvasRenderingContext2D | null>(null);
 const image = ref<HTMLImageElement | null>(null);
 const importFileInput = ref<HTMLInputElement | null>(null);
 
-const mode = ref<"draw" | "pan" | "select">("draw");
+const mode = ref<"draw" | "pan" | "select">(resolveDefaultMode());
 const lines = ref<Line[]>([]);
 const selectedLine = ref<number | null>(null);
+
+const isImageLoading = ref(false);
+const imageLoadError = ref("");
+const isImageReady = ref(false);
+const isCanvasInteractive = computed(() => isImageReady.value && !isImageLoading.value && !imageLoadError.value);
 
 // Pan/zoom state
 const MIN_ZOOM = 0.3;
@@ -320,6 +369,9 @@ type PinchState = {
 
 const activeTouchPointers = new Map<number, { x: number; y: number }>();
 let pinchState: PinchState | null = null;
+let resizeObserver: ResizeObserver | null = null;
+let imageLoadRequestId = 0;
+const isSessionActive = ref(false);
 
 // Drawing state
 const drawing = ref(false);
@@ -556,43 +608,69 @@ const migrateLine = (line: Line): Line => {
   return migrated;
 };
 
-const loadImage = () => {
-  if (!props.photoUrl) return;
+const hydrateLinesForDisplay = () => {
+  const draft = loadDraft(cachedPhotoId.value);
+  if (draft && draft.length > 0) {
+    const normalized = draft.map(migrateLine).map(toNormalizedLine);
+    lines.value = denormalizeLines(normalized);
+    toast.push("Da khoi phuc ban nhap chua luu", "success");
+    return;
+  }
+  if (props.initialAnnotations && props.initialAnnotations.length > 0) {
+    const normalized = props.initialAnnotations.map(migrateLine).map(toNormalizedLine);
+    lines.value = denormalizeLines(normalized);
+    return;
+  }
+  lines.value = [];
+};
 
-  console.log("loadImage called", {
-    photoUrl: props.photoUrl,
-    photoId: props.photoId,
-    initialAnnotations: props.initialAnnotations
-  });
+const applyLoadedImage = (attempt = 0) => {
+  if (!resizeCanvas()) {
+    if (attempt < 12) {
+      requestAnimationFrame(() => applyLoadedImage(attempt + 1));
+      return;
+    }
+    isImageLoading.value = false;
+    isImageReady.value = false;
+    imageLoadError.value = "Khong the hien thi anh, vui long thu lai.";
+    return;
+  }
+  hydrateLinesForDisplay();
+  draw();
+  isImageLoading.value = false;
+  isImageReady.value = true;
+  imageLoadError.value = "";
+};
+
+const loadImage = () => {
+  const requestId = imageLoadRequestId + 1;
+  imageLoadRequestId = requestId;
+  isImageLoading.value = true;
+  isImageReady.value = false;
+  imageLoadError.value = "";
+  image.value = null;
+
+  if (!props.photoUrl) {
+    isImageLoading.value = false;
+    imageLoadError.value = "Khong tim thay duong dan anh.";
+    return;
+  }
 
   const img = new Image();
   img.crossOrigin = "anonymous";
+  img.decoding = "async";
   img.onload = () => {
+    if (requestId !== imageLoadRequestId) return;
     image.value = img;
-    resizeCanvas();
-    // Kiểm tra draft trong localStorage trước
-    const draft = loadDraft(cachedPhotoId.value);
-    if (draft && draft.length > 0) {
-      // Có draft chưa lưu → recover
-      const normalized = draft.map(migrateLine).map(toNormalizedLine);
-      lines.value = denormalizeLines(normalized);
-      toast.push("Đã khôi phục bản nháp chưa lưu", "success");
-      console.log("Recovered draft annotations:", lines.value);
-    } else if (props.initialAnnotations && props.initialAnnotations.length > 0) {
-      // Migrate → denormalize (0-1 → pixel) cho display hiện tại
-      const normalized = props.initialAnnotations.map(migrateLine).map(toNormalizedLine);
-      lines.value = denormalizeLines(normalized);
-      console.log("Loaded, migrated and denormalized annotations:", lines.value);
-    } else {
-      console.log("No initial annotations to load");
-      lines.value = [];
-    }
-    draw();
+    applyLoadedImage();
   };
   img.onerror = () => {
-    toast.push("Không thể tải ảnh", "error");
+    if (requestId !== imageLoadRequestId) return;
+    isImageLoading.value = false;
+    isImageReady.value = false;
+    imageLoadError.value = "Khong the tai anh.";
+    toast.push("Khong the tai anh", "error");
   };
-  // Thêm timestamp để tránh cache
   const isLocalPreviewUrl =
     props.photoUrl.startsWith("blob:") || props.photoUrl.startsWith("data:");
   if (isLocalPreviewUrl) {
@@ -601,53 +679,75 @@ const loadImage = () => {
   }
 
   const urlWithTimestamp = props.photoUrl.includes("?")
-    ? `${props.photoUrl}&t=${Date.now()}`
-    : `${props.photoUrl}?t=${Date.now()}`;
+    ? props.photoUrl + "&t=" + Date.now()
+    : props.photoUrl + "?t=" + Date.now();
   img.src = urlWithTimestamp;
+};
+
+const retryLoadImage = () => {
+  loadImage();
 };
 
 const resizeCanvas = () => {
   const canvas = canvasRef.value;
   const img = image.value;
-  if (!canvas || !img) return;
+  if (!canvas || !img || !process.client) return false;
 
   const container = canvas.parentElement;
-  if (!container) return;
+  if (!container) return false;
 
   const containerWidth = container.clientWidth;
   const containerHeight = container.clientHeight;
+  if (containerWidth < 2 || containerHeight < 2) return false;
 
-  // Tính scale để fit ảnh vào container
+  const sourceWidth = img.naturalWidth || img.width;
+  const sourceHeight = img.naturalHeight || img.height;
+  if (sourceWidth < 2 || sourceHeight < 2) return false;
+
   const scale = Math.min(
-    containerWidth / img.width,
-    containerHeight / img.height
+    containerWidth / sourceWidth,
+    containerHeight / sourceHeight
   );
+  if (!Number.isFinite(scale) || scale <= 0) return false;
 
-  const displayWidth = img.width * scale;
-  const displayHeight = img.height * scale;
-
-  // Sử dụng devicePixelRatio để ảnh sắc nét hơn
+  const displayWidth = sourceWidth * scale;
+  const displayHeight = sourceHeight * scale;
   const dpr = window.devicePixelRatio || 1;
 
-  // Set canvas internal resolution cao hơn
   canvas.width = displayWidth * dpr;
   canvas.height = displayHeight * dpr;
-
-  // Set CSS display size
-  canvas.style.width = `${displayWidth}px`;
-  canvas.style.height = `${displayHeight}px`;
+  canvas.style.width = String(displayWidth) + "px";
+  canvas.style.height = String(displayHeight) + "px";
 
   const context = canvas.getContext("2d");
   if (context) {
-    // Enable high-quality image rendering
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
-    // Scale context để vẽ dễ dàng hơn - coordinates sẽ theo display size
-    context.scale(dpr, dpr);
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.value = context;
+    return true;
+  }
+  return false;
+};
+
+const stopResizeObserver = () => {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
   }
 };
 
+const startResizeObserver = () => {
+  if (!process.client || typeof ResizeObserver === "undefined") return;
+  const container = canvasRef.value?.parentElement;
+  if (!container) return;
+  stopResizeObserver();
+  resizeObserver = new ResizeObserver(() => {
+    if (!isSessionActive.value || !image.value || isImageLoading.value) return;
+    handleResize();
+  });
+  resizeObserver.observe(container);
+};
 const getDisplayPointFromClient = (clientX: number, clientY: number) => {
   const canvas = canvasRef.value;
   if (!canvas) return null;
@@ -696,6 +796,7 @@ const resetView = () => {
 };
 
 const handleWheel = (e: WheelEvent) => {
+  if (!isCanvasInteractive.value) return;
   e.preventDefault();
   const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
   applyZoomAt(zoomLevel.value * factor, { x: e.clientX, y: e.clientY });
@@ -703,8 +804,9 @@ const handleWheel = (e: WheelEvent) => {
 
 // Handle resize: lưu tạm về normalized rồi dựng lại theo canvas mới để tránh drift giữa thiết bị.
 const handleResize = () => {
+  if (!image.value) return;
   const normalized = normalizeLines(lines.value);
-  resizeCanvas();
+  if (!resizeCanvas()) return;
   lines.value = denormalizeLines(normalized);
   draw();
 };
@@ -1012,6 +1114,7 @@ const handlePointerDown = (e: PointerEvent) => {
   if (!canvas) return;
 
   if (e.pointerType === "touch") {
+    e.preventDefault();
     activeTouchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try {
       canvas.setPointerCapture(e.pointerId);
@@ -1025,6 +1128,7 @@ const handlePointerDown = (e: PointerEvent) => {
     }
   }
 
+  if (!isCanvasInteractive.value) return;
   if (pinchState) return;
 
   if (mode.value === "pan") {
@@ -1066,6 +1170,11 @@ const handlePointerDown = (e: PointerEvent) => {
 };
 
 const handlePointerMove = (e: PointerEvent) => {
+  if (e.pointerType === "touch") {
+    e.preventDefault();
+  }
+  if (!isCanvasInteractive.value) return;
+
   if (e.pointerType === "touch" && activeTouchPointers.has(e.pointerId)) {
     activeTouchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinchState || activeTouchPointers.size >= 2) {
@@ -1145,6 +1254,7 @@ const handlePointerUp = (e: PointerEvent) => {
   const canvas = canvasRef.value;
 
   if (e.pointerType === "touch") {
+    e.preventDefault();
     activeTouchPointers.delete(e.pointerId);
     if (canvas?.hasPointerCapture?.(e.pointerId)) {
       try {
@@ -1163,6 +1273,7 @@ const handlePointerUp = (e: PointerEvent) => {
     }
   }
 
+  if (!isCanvasInteractive.value) return;
   if (mode.value === "pan" && isPanning.value) {
     isPanning.value = false;
     panStart.value = null;
@@ -1453,57 +1564,102 @@ const handleMeasurementCancel = () => {
 };
 
 // Watch for show changes
-watch(() => props.show, (newVal, oldVal) => {
-  console.log("Watch props.show", { newVal, oldVal, photoId: props.photoId });
+const resetInteractionState = () => {
+  panOffset.value = { x: 0, y: 0 };
+  zoomLevel.value = 1;
+  isPanning.value = false;
+  panStart.value = null;
+  drawing.value = false;
+  startPoint.value = null;
+  currentPoint.value = null;
+  dragging.value = false;
+  draggingEndpoint.value = null;
+  dragStart.value = null;
+  activeTouchPointers.clear();
+  pinchState = null;
+};
 
-  if (newVal && !oldVal) {
-    // Cache photoId khi mở
-    cachedPhotoId.value = props.photoId;
-
-    // Reset pan/zoom
-    panOffset.value = { x: 0, y: 0 };
-    zoomLevel.value = 1;
-    isPanning.value = false;
-    panStart.value = null;
-    activeTouchPointers.clear();
-    pinchState = null;
-
-    // Chỉ load khi mở modal (từ false → true)
-    nextTick(() => {
-      loadImage();
-      startAutosave();
-      window.addEventListener("resize", handleResize);
-    });
-  } else if (!newVal && oldVal) {
-    // Khi đóng modal (từ true → false)
-    stopAutosave();
-    window.removeEventListener("resize", handleResize);
-    activeTouchPointers.clear();
-    pinchState = null;
-    // Auto-save nếu có lines và có photoId
-    if (lines.value.length > 0 && cachedPhotoId.value) {
-      const photoIdToSave = cachedPhotoId.value;
-      if (photoIdToSave) {
-        api.patch(`/photos/${photoIdToSave}`, {
-          annotations: normalizeLines(lines.value)
-        }).then((result) => {
-          if (isOfflineQueuedResponse(result)) {
-            saveDraft();
-            console.log("Queued annotations on close");
-            return;
-          }
-          clearDraft(photoIdToSave); // Xoá draft sau khi lưu thành công
-          console.log("Auto-saved annotations on close");
-          emit("saved");
-        }).catch((err) => {
-          // Lưu server lỗi → giữ draft trong localStorage để recover sau
-          saveDraft();
-          console.error("Error auto-saving annotations:", err);
-        });
-      }
+const persistAnnotationsOnClose = () => {
+  if (lines.value.length === 0 || !cachedPhotoId.value) return;
+  const photoIdToSave = cachedPhotoId.value;
+  api.patch(`/photos/${photoIdToSave}`, {
+    annotations: normalizeLines(lines.value)
+  }).then((result) => {
+    if (isOfflineQueuedResponse(result)) {
+      saveDraft();
+      return;
     }
+    clearDraft(photoIdToSave);
+    emit("saved");
+  }).catch(() => {
+    // Keep local draft for recovery when autosave fails.
+    saveDraft();
+  });
+};
+
+const startSession = () => {
+  if (isSessionActive.value) return;
+  isSessionActive.value = true;
+  cachedPhotoId.value = props.photoId;
+  mode.value = resolveDefaultMode();
+  selectedLine.value = null;
+  showMeasurementModal.value = false;
+  pendingLineIndex.value = null;
+  imageLoadError.value = "";
+  resetInteractionState();
+
+  nextTick(() => {
+    loadImage();
+    startAutosave();
+    if (process.client) {
+      window.addEventListener("resize", handleResize);
+      startResizeObserver();
+    }
+  });
+};
+
+const stopSession = () => {
+  if (!isSessionActive.value) return;
+  isSessionActive.value = false;
+  stopAutosave();
+  if (process.client) {
+    window.removeEventListener("resize", handleResize);
   }
-}, { immediate: false });
+  stopResizeObserver();
+  activeTouchPointers.clear();
+  pinchState = null;
+  imageLoadRequestId += 1;
+  isImageLoading.value = false;
+  persistAnnotationsOnClose();
+};
+
+watch(
+  () => props.show,
+  (show) => {
+    if (show) {
+      startSession();
+      return;
+    }
+    stopSession();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => props.photoId,
+  (newPhotoId, oldPhotoId) => {
+    if (!props.show || !isSessionActive.value) return;
+    if (!newPhotoId || newPhotoId === oldPhotoId) return;
+    cachedPhotoId.value = newPhotoId;
+    selectedLine.value = null;
+    lines.value = [];
+    loadImage();
+  }
+);
+
+onBeforeUnmount(() => {
+  stopSession();
+});
 
 </script>
 

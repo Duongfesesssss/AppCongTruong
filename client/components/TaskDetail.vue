@@ -199,7 +199,7 @@
               :src="getPhotoUrl(photo)"
               :alt="photo.storageKey"
               class="h-full w-full object-cover transition-transform"
-              :class="photo._offlineQueued ? 'cursor-pointer opacity-90 group-hover:scale-105' : 'cursor-pointer group-hover:scale-105'"
+              :class="photo._offlineQueued ? 'cursor-pointer opacity-90 md:group-hover:scale-105' : 'cursor-pointer md:group-hover:scale-105'"
               @click="openAnnotator(photo)"
             />
             <!-- Delete button (top-left) -->
@@ -232,10 +232,10 @@
             </div>
             <div
               class="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors"
-              :class="'cursor-pointer group-hover:bg-black/30'"
+              :class="'cursor-pointer md:group-hover:bg-black/30'"
               @click="openAnnotator(photo)"
             >
-              <svg class="h-8 w-8 text-white opacity-0 transition-opacity group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-8 w-8 text-white opacity-0 transition-opacity md:group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
               </svg>
