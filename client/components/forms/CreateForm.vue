@@ -419,6 +419,9 @@ const selectedProjectCode = ref("");
 const drawingDraftNameLockedByUser = ref(false);
 const drawingManualTagsLockedByUser = ref(false);
 const drawingAutoScanRequestId = ref(0);
+const drawingDraftProjectToken = ref("");
+const DRAFT_PROJECT_TOKEN_DEBOUNCE_MS = 300;
+let draftProjectTokenTimer: ReturnType<typeof setTimeout> | null = null;
 const drawingRequiredManualFields = [
   "project",
   "unit",
@@ -559,8 +562,18 @@ const extractOcrTokens = (text: string) => {
   return toUniqueTokens(tokens, false);
 };
 
+const cmsItemsByScope = computed(() => {
+  const map = new Map<string, CmsTagNameSuggestionItem[]>();
+  cmsTagItems.value.forEach((item) => {
+    if (!item.isActive) return;
+    if (!map.has(item.scope)) map.set(item.scope, []);
+    map.get(item.scope)!.push(item);
+  });
+  return map;
+});
+
 const getCmsTagItemsByScopes = (scopes: CmsTagNameSuggestionItem["scope"][]) => {
-  return cmsTagItems.value.filter((item) => item.isActive && scopes.includes(item.scope));
+  return scopes.flatMap((scope) => cmsItemsByScope.value.get(scope) ?? []);
 };
 
 const getCmsTagItemsForField = (field: DrawingCoreTagField) => {
@@ -641,7 +654,7 @@ const buildDrawingTagOptionsForField = (field: DrawingCoreTagField) => {
     if (selectedProjectCode.value) {
       values.push(selectedProjectCode.value);
     }
-    const draftProject = drawingDraftName.value.split("-")[0] || "";
+    const draftProject = drawingDraftProjectToken.value;
     if (draftProject) values.push(draftProject);
   }
 
@@ -671,28 +684,34 @@ const getDrawingTagOptions = (field: DrawingCoreTagField): DrawingTagOption[] =>
   return drawingTagOptionsByField.value[field] || [];
 };
 
-const getDrawingSupplementaryTagOptions = (field: DrawingSupplementaryTagField): DrawingTagOption[] => {
-  const scopes = drawingSupplementaryCmsScopes[field] || [];
-  const items = getCmsTagItemsByScopes(scopes);
-  const values: string[] = [];
-  items.forEach((item) => {
-    values.push(item.code);
-    (item.aliases || []).forEach((alias) => values.push(alias));
-  });
-
-  const normalizedValues = toUniqueTokens(values, false);
-  return normalizedValues.map((value) => {
-    const matched = items.find((item) => {
-      const normalizedCode = normalizeDrawingTagToken(item.code, false);
-      if (normalizedCode === value) return true;
-      return (item.aliases || []).some((alias) => normalizeDrawingTagToken(alias, false) === value);
+const drawingSupplementaryTagOptionsByField = computed<Record<DrawingSupplementaryTagField, DrawingTagOption[]>>(() => {
+  const result = {} as Record<DrawingSupplementaryTagField, DrawingTagOption[]>;
+  drawingSupplementaryTagFields.forEach((field) => {
+    const scopes = drawingSupplementaryCmsScopes[field] || [];
+    const items = getCmsTagItemsByScopes(scopes);
+    const values: string[] = [];
+    items.forEach((item) => {
+      values.push(item.code);
+      (item.aliases || []).forEach((alias) => values.push(alias));
     });
-
-    if (matched?.label) {
-      return { value, label: `${value} - ${matched.label}` };
-    }
-    return { value, label: value };
+    const normalizedValues = toUniqueTokens(values, false);
+    result[field] = normalizedValues.map((value) => {
+      const matched = items.find((item) => {
+        const normalizedCode = normalizeDrawingTagToken(item.code, false);
+        if (normalizedCode === value) return true;
+        return (item.aliases || []).some((alias) => normalizeDrawingTagToken(alias, false) === value);
+      });
+      if (matched?.label) {
+        return { value, label: `${value} - ${matched.label}` };
+      }
+      return { value, label: value };
+    });
   });
+  return result;
+});
+
+const getDrawingSupplementaryTagOptions = (field: DrawingSupplementaryTagField): DrawingTagOption[] => {
+  return drawingSupplementaryTagOptionsByField.value[field] || [];
 };
 
 const hasAnyDrawingTagOptions = computed(() => {
@@ -715,6 +734,11 @@ const resetDrawingManualTags = () => {
 
 const handleDrawingDraftNameInput = () => {
   drawingDraftNameLockedByUser.value = true;
+  if (draftProjectTokenTimer !== null) clearTimeout(draftProjectTokenTimer);
+  draftProjectTokenTimer = setTimeout(() => {
+    drawingDraftProjectToken.value = drawingDraftName.value.split("-")[0] || "";
+    draftProjectTokenTimer = null;
+  }, DRAFT_PROJECT_TOKEN_DEBOUNCE_MS);
 };
 
 const handleDrawingCoreTagChange = () => {
@@ -1015,6 +1039,7 @@ const handleFileChange = async (e: Event) => {
   drawingAutoScanText.value = "";
   drawingParsed.value = null;
   drawingDraftName.value = "";
+  drawingDraftProjectToken.value = "";
   drawingDraftNameLockedByUser.value = false;
   drawingManualTagsLockedByUser.value = false;
   resetDrawingManualTags();
@@ -1037,12 +1062,14 @@ const handleFileChange = async (e: Event) => {
     if (result.parsed) {
       if (!drawingDraftNameLockedByUser.value) {
         drawingDraftName.value = result.parsed.suggestedName || result.parsed.drawingCode || "";
+        drawingDraftProjectToken.value = drawingDraftName.value.split("-")[0] || "";
       }
       if (!drawingManualTagsLockedByUser.value) {
         applyDrawingManualTagsFromParsed(result.parsed);
       }
     } else if (!drawingDraftName.value && extractedTokens.length > 0 && !drawingDraftNameLockedByUser.value) {
       drawingDraftName.value = extractedTokens.slice(0, 7).join("-");
+      drawingDraftProjectToken.value = drawingDraftName.value.split("-")[0] || "";
     }
 
     drawingAutoScanStatus.value = result.matched ? "matched" : "unmatched";
@@ -1078,6 +1105,11 @@ const resetForm = () => {
   drawingAutoScanText.value = "";
   drawingParsed.value = null;
   drawingDraftName.value = "";
+  drawingDraftProjectToken.value = "";
+  if (draftProjectTokenTimer !== null) {
+    clearTimeout(draftProjectTokenTimer);
+    draftProjectTokenTimer = null;
+  }
   drawingDraftNameLockedByUser.value = false;
   drawingManualTagsLockedByUser.value = false;
   resetDrawingManualTags();

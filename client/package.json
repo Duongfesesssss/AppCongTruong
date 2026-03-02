@@ -9,11 +9,13 @@
     "postinstall": "node scripts/patch-vue-macros.mjs"
   },
   "dependencies": {
+    "@eslint/js": "^10.0.1",
     "@nuxtjs/tailwindcss": "^6.11.4",
     "nuxt": "^3.12.4",
     "pdfjs-dist": "^5.4.624",
     "socket.io-client": "^4.8.3",
     "tesseract.js": "^6.0.1",
+    "typescript-eslint": "^8.56.1",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
