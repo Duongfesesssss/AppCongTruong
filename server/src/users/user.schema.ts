@@ -30,3 +30,12 @@ export const refreshSchema = z.object({
     })
     .optional()
 });
+
+export const updateProfileSchema = z.object({
+  body: z.object({
+    name: z.string().min(2, "Tên phải có ít nhất 2 ký tự").optional(),
+    bio: z.string().max(500, "Bio không được vượt quá 500 ký tự").optional(),
+    phone: z.string().regex(/^[0-9+\-\s()]*$/, "Số điện thoại không hợp lệ").optional(),
+    metadata: z.record(z.unknown()).optional()
+  })
+});

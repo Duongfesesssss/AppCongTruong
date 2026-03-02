@@ -1,256 +1,289 @@
 <template>
-  <div class="grid gap-6">
-    <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p class="text-xs uppercase tracking-widest text-slate-400">CMS / Tag Name</p>
-          <h1 class="text-lg font-semibold text-slate-900 sm:text-xl">Quản Lý Tag Name</h1>
-        </div>
-        <div class="flex items-center gap-2">
-          <NuxtLink to="/" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">
-            Về trang bản vẽ
-          </NuxtLink>
-          <NuxtLink
-            to="/cms"
-            class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            Về trang CMS
-          </NuxtLink>
-        </div>
-      </div>
-      <p class="mt-2 text-sm text-slate-600">
-        Quản lý mã viết tắt để dùng chung cho OCR/đặt tên bản vẽ theo chuẩn.
-      </p>
-      <div class="mt-3">
-        <button
-          type="button"
-          class="rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-60"
-          :disabled="bootstrapping"
-          @click="bootstrapDefaults"
-        >
-          {{ bootstrapping ? "Đang nạp bộ tag chuẩn..." : "Nạp bộ tag chuẩn V4" }}
-        </button>
-      </div>
-    </section>
-
-    <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <h2 class="text-base font-semibold text-slate-900">Thêm Tag Name</h2>
-      <form class="mt-4 grid gap-3" @submit.prevent="createTagName">
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Scope</label>
-            <select
-              v-model="form.scope"
-              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-            >
-              <option v-for="scope in scopeOptions" :key="scope.value" :value="scope.value">
-                {{ scope.label }}
-              </option>
-            </select>
-          </div>
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Code</label>
-            <input
-              v-model="form.code"
-              type="text"
-              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-              placeholder="VD: AA"
-            />
-          </div>
-        </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Alias</label>
-            <input
-              v-model="form.aliases"
-              type="text"
-              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-              placeholder="VD: AR, A-Alias"
-            />
-          </div>
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tên hiển thị</label>
-            <input
-              v-model="form.label"
-              type="text"
-              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-              placeholder="VD: Kiến trúc (Architectural)"
-            />
-          </div>
-        </div>
-        <div>
-          <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Mô tả</label>
-          <input
-            v-model="form.description"
-            type="text"
-            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-            placeholder="Ghi chú thêm..."
-          />
-        </div>
-        <div class="flex items-center gap-2">
-          <input id="active-tag" v-model="form.isActive" type="checkbox" class="h-4 w-4 rounded border-slate-300" />
-          <label for="active-tag" class="text-sm text-slate-700">Kích hoạt</label>
-        </div>
-        <p v-if="formError" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-          {{ formError }}
+  <div>
+    <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">Quản lý Tag Name</h1>
+        <p class="mt-1 text-sm text-slate-600">
+          Quản lý mã viết tắt để dùng chung cho OCR/đặt tên bản vẽ theo chuẩn
         </p>
-        <div class="flex justify-end">
-          <button
-            type="submit"
-            class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
-            :disabled="saving"
-          >
-            {{ saving ? "Đang thêm..." : "Thêm tag name" }}
-          </button>
-        </div>
-      </form>
-    </section>
+      </div>
+      <PrimeButton
+        label="Nạp bộ tag chuẩn V4"
+        icon="pi pi-download"
+        severity="secondary"
+        :loading="bootstrapping"
+        @click="bootstrapDefaults"
+      />
+    </div>
 
-    <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-base font-semibold text-slate-900">Danh Sách Tag Name</h2>
+    <!-- Create Tag Name Section -->
+    <Card class="mb-6 shadow-md">
+      <template #title>
         <div class="flex items-center gap-2">
-          <select
-            v-model="scopeFilter"
-            class="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500"
-          >
-            <option v-for="scope in scopeOptions" :key="`filter-${scope.value}`" :value="scope.value">
-              {{ scope.label }}
-            </option>
-          </select>
-          <input
-            v-model="query"
-            type="text"
-            class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-brand-500"
-            placeholder="Tìm code/tên..."
+          <i class="pi pi-plus-circle text-brand-600"></i>
+          <span>Thêm Tag Name</span>
+        </div>
+      </template>
+      <template #content>
+        <form class="grid gap-4" @submit.prevent="createTagName">
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="flex flex-col gap-2">
+              <label for="scope" class="text-sm font-medium text-slate-700">Scope</label>
+              <Dropdown
+                id="scope"
+                v-model="form.scope"
+                :options="scopeOptions"
+                optionLabel="label"
+                optionValue="value"
+                placeholder="Chọn scope"
+              />
+            </div>
+            <div class="flex flex-col gap-2">
+              <label for="code" class="text-sm font-medium text-slate-700">Code</label>
+              <InputText
+                id="code"
+                v-model="form.code"
+                placeholder="VD: AA"
+                :class="{ 'p-invalid': formError && !form.code.trim() }"
+              />
+            </div>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="flex flex-col gap-2">
+              <label for="aliases" class="text-sm font-medium text-slate-700">Alias</label>
+              <InputText id="aliases" v-model="form.aliases" placeholder="VD: AR, A-Alias" />
+              <small class="text-slate-500">Phân tách bằng dấu phẩy</small>
+            </div>
+            <div class="flex flex-col gap-2">
+              <label for="label" class="text-sm font-medium text-slate-700">Tên hiển thị</label>
+              <InputText
+                id="label"
+                v-model="form.label"
+                placeholder="VD: Kiến trúc (Architectural)"
+                :class="{ 'p-invalid': formError && !form.label.trim() }"
+              />
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label for="description" class="text-sm font-medium text-slate-700">Mô tả</label>
+            <InputText id="description" v-model="form.description" placeholder="Ghi chú thêm..." />
+          </div>
+
+          <div class="flex items-center gap-2">
+            <Checkbox id="active-tag" v-model="form.isActive" :binary="true" />
+            <label for="active-tag" class="text-sm text-slate-700">Kích hoạt</label>
+          </div>
+
+          <div v-if="formError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            <i class="pi pi-exclamation-circle mr-2"></i>
+            {{ formError }}
+          </div>
+
+          <div class="flex justify-end gap-2">
+            <PrimeButton
+              label="Reset"
+              icon="pi pi-refresh"
+              severity="secondary"
+              outlined
+              @click="resetForm"
+              type="button"
+            />
+            <PrimeButton label="Thêm tag name" icon="pi pi-plus" :loading="saving" type="submit" />
+          </div>
+        </form>
+      </template>
+    </Card>
+
+    <!-- Tag Name List Section -->
+    <Card class="shadow-md">
+      <template #title>
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <span>Danh sách Tag Name</span>
+          <div class="flex items-center gap-2">
+            <Dropdown
+              v-model="scopeFilter"
+              :options="scopeOptions"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Chọn scope"
+              class="w-40"
+            />
+            <InputText v-model="query" placeholder="Tìm code/tên..." class="w-48" />
+            <PrimeButton
+              icon="pi pi-refresh"
+              severity="secondary"
+              outlined
+              @click="fetchTagNames"
+            />
+          </div>
+        </div>
+      </template>
+      <template #content>
+        <div v-if="loading" class="py-8 text-center">
+          <ProgressSpinner style="width: 50px; height: 50px" />
+          <p class="mt-3 text-sm text-slate-500">Đang tải dữ liệu...</p>
+        </div>
+
+        <div v-else-if="loadError" class="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+          <i class="pi pi-exclamation-triangle mr-2"></i>
+          {{ loadError }}
+        </div>
+
+        <div
+          v-else-if="filteredTagNames.length === 0"
+          class="rounded-lg border-2 border-dashed border-slate-200 py-12 text-center"
+        >
+          <i class="pi pi-inbox text-4xl text-slate-300"></i>
+          <p class="mt-3 text-sm text-slate-500">Chưa có tag name nào</p>
+        </div>
+
+        <DataTable
+          v-else
+          :value="filteredTagNames"
+          paginator
+          :rows="10"
+          :rowsPerPageOptions="[5, 10, 20, 50]"
+          stripedRows
+          responsiveLayout="scroll"
+          class="text-sm"
+        >
+          <Column field="code" header="Code" sortable style="min-width: 100px">
+            <template #body="{ data }">
+              <div class="font-semibold text-slate-900">{{ data.code }}</div>
+              <div v-if="data.aliases?.length" class="text-xs text-slate-500">
+                {{ data.aliases.join(", ") }}
+              </div>
+            </template>
+          </Column>
+
+          <Column field="label" header="Tên hiển thị" sortable style="min-width: 200px">
+            <template #body="{ data }">
+              <div class="text-slate-900">{{ data.label }}</div>
+            </template>
+          </Column>
+
+          <Column field="description" header="Mô tả" style="min-width: 200px">
+            <template #body="{ data }">
+              <div class="text-slate-600">{{ data.description || "—" }}</div>
+            </template>
+          </Column>
+
+          <Column field="scope" header="Scope" sortable style="min-width: 120px">
+            <template #body="{ data }">
+              <Tag :value="data.scope" severity="info" class="text-xs" />
+            </template>
+          </Column>
+
+          <Column field="isActive" header="Trạng thái" sortable style="min-width: 100px">
+            <template #body="{ data }">
+              <Tag
+                :value="data.isActive ? 'Active' : 'Inactive'"
+                :severity="data.isActive ? 'success' : 'secondary'"
+              />
+            </template>
+          </Column>
+
+          <Column header="Thao tác" style="min-width: 150px">
+            <template #body="{ data }">
+              <div class="flex gap-2">
+                <PrimeButton
+                  icon="pi pi-pencil"
+                  severity="info"
+                  size="small"
+                  outlined
+                  @click="openEditDialog(data)"
+                />
+                <PrimeButton
+                  icon="pi pi-trash"
+                  severity="danger"
+                  size="small"
+                  outlined
+                  :loading="deletingId === data._id"
+                  @click="confirmDelete(data)"
+                />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </template>
+    </Card>
+
+    <!-- Edit Dialog -->
+    <PrimeDialog
+      v-model:visible="editDialogVisible"
+      header="Chỉnh sửa Tag Name"
+      :modal="true"
+      :style="{ width: '500px' }"
+    >
+      <div class="grid gap-4">
+        <div class="flex flex-col gap-2">
+          <label for="edit-scope" class="text-sm font-medium text-slate-700">Scope</label>
+          <Dropdown
+            id="edit-scope"
+            v-model="editForm.scope"
+            :options="scopeOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Chọn scope"
           />
-          <button
-            class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
-            @click="fetchTagNames"
-          >
-            Làm mới
-          </button>
+        </div>
+        <div class="flex flex-col gap-2">
+          <label for="edit-code" class="text-sm font-medium text-slate-700">Code</label>
+          <InputText
+            id="edit-code"
+            v-model="editForm.code"
+            placeholder="VD: AA"
+            :class="{ 'p-invalid': editError && !editForm.code.trim() }"
+          />
+        </div>
+        <div class="flex flex-col gap-2">
+          <label for="edit-aliases" class="text-sm font-medium text-slate-700">Alias</label>
+          <InputText id="edit-aliases" v-model="editForm.aliases" placeholder="VD: AR, A-Alias" />
+        </div>
+        <div class="flex flex-col gap-2">
+          <label for="edit-label" class="text-sm font-medium text-slate-700">Tên hiển thị</label>
+          <InputText
+            id="edit-label"
+            v-model="editForm.label"
+            placeholder="VD: Kiến trúc"
+            :class="{ 'p-invalid': editError && !editForm.label.trim() }"
+          />
+        </div>
+        <div class="flex flex-col gap-2">
+          <label for="edit-description" class="text-sm font-medium text-slate-700">Mô tả</label>
+          <InputText id="edit-description" v-model="editForm.description" placeholder="Ghi chú..." />
+        </div>
+        <div class="flex items-center gap-2">
+          <Checkbox id="edit-active" v-model="editForm.isActive" :binary="true" />
+          <label for="edit-active" class="text-sm text-slate-700">Kích hoạt</label>
+        </div>
+        <div v-if="editError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          <i class="pi pi-exclamation-circle mr-2"></i>
+          {{ editError }}
         </div>
       </div>
+      <template #footer>
+        <PrimeButton label="Hủy" icon="pi pi-times" severity="secondary" outlined @click="closeEditDialog" />
+        <PrimeButton label="Lưu" icon="pi pi-check" :loading="updating" @click="updateTagName" />
+      </template>
+    </PrimeDialog>
 
-      <div v-if="loading" class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">
-        Đang tải dữ liệu...
-      </div>
-      <div v-else-if="loadError" class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
-        {{ loadError }}
-      </div>
-      <div
-        v-else-if="filteredTagNames.length === 0"
-        class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500"
-      >
-        Chưa có tag name nào.
-      </div>
-      <div v-else class="space-y-2">
-        <article
-          v-for="item in filteredTagNames"
-          :key="item._id"
-          class="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3"
-        >
-          <div class="min-w-0 flex-1">
-            <template v-if="editingId === item._id">
-              <div class="grid gap-2 sm:grid-cols-2">
-                <select
-                  v-model="editForm.scope"
-                  class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs outline-none focus:border-brand-500"
-                >
-                  <option v-for="scope in scopeOptions" :key="`edit-${scope.value}`" :value="scope.value">
-                    {{ scope.label }}
-                  </option>
-                </select>
-                <input
-                  v-model="editForm.code"
-                  type="text"
-                  class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs outline-none focus:border-brand-500"
-                  placeholder="Code"
-                />
-                <input
-                  v-model="editForm.aliases"
-                  type="text"
-                  class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs outline-none focus:border-brand-500 sm:col-span-2"
-                  placeholder="Alias: AR, A-Alias"
-                />
-                <input
-                  v-model="editForm.label"
-                  type="text"
-                  class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs outline-none focus:border-brand-500 sm:col-span-2"
-                  placeholder="Tên hiển thị"
-                />
-                <input
-                  v-model="editForm.description"
-                  type="text"
-                  class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs outline-none focus:border-brand-500 sm:col-span-2"
-                  placeholder="Mô tả"
-                />
-                <label class="inline-flex items-center gap-2 text-xs text-slate-600 sm:col-span-2">
-                  <input v-model="editForm.isActive" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" />
-                  Kích hoạt
-                </label>
-              </div>
-              <p v-if="editError" class="mt-2 text-xs text-rose-600">{{ editError }}</p>
-            </template>
-            <template v-else>
-              <p class="text-sm font-semibold text-slate-900">
-                {{ item.code }}
-                <span v-if="item.aliases?.length" class="font-normal text-slate-500">/ {{ item.aliases.join(" / ") }}</span>
-              </p>
-              <p class="text-sm text-slate-700">{{ item.label }}</p>
-              <p v-if="item.description" class="text-xs text-slate-500">{{ item.description }}</p>
-              <p class="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
-                {{ item.scope }} · {{ item.isActive ? "active" : "inactive" }}
-              </p>
-            </template>
-          </div>
-          <div class="flex items-center gap-2">
-            <template v-if="editingId === item._id">
-              <button
-                type="button"
-                class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-60"
-                :disabled="updatingId === item._id"
-                @click="cancelEdit"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                class="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
-                :disabled="updatingId === item._id"
-                @click="updateTagName(item._id)"
-              >
-                {{ updatingId === item._id ? "Đang lưu..." : "Lưu" }}
-              </button>
-            </template>
-            <template v-else>
-              <button
-                type="button"
-                class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
-                @click="startEdit(item)"
-              >
-                Sửa
-              </button>
-              <button
-                type="button"
-                class="rounded-lg border border-rose-200 px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-60"
-                :disabled="deletingId === item._id"
-                @click="deleteTagName(item._id)"
-              >
-                {{ deletingId === item._id ? "Đang xóa..." : "Xóa" }}
-              </button>
-            </template>
-          </div>
-        </article>
-      </div>
-    </section>
+    <!-- Confirm Delete Dialog -->
+    <ConfirmDialog />
+    <PrimeToast position="top-right" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { useApi } from "~/composables/api/useApi";
-import { useToast } from "~/composables/state/useToast";
+import { useToast } from "primevue/usetoast";
+import { useConfirm } from "primevue/useconfirm";
+
+definePageMeta({
+  layout: "cms"
+});
 
 type CmsTagScope =
   | "project"
@@ -295,12 +328,12 @@ const scopeOptions: Array<{ value: CmsTagScope; label: string }> = [
 
 const api = useApi();
 const toast = useToast();
+const confirm = useConfirm();
 
 const loading = ref(false);
 const saving = ref(false);
+const updating = ref(false);
 const bootstrapping = ref(false);
-const editingId = ref("");
-const updatingId = ref("");
 const deletingId = ref("");
 const loadError = ref("");
 const formError = ref("");
@@ -308,6 +341,8 @@ const editError = ref("");
 const query = ref("");
 const scopeFilter = ref<CmsTagScope>("discipline");
 const tagNames = ref<CmsTagNameItem[]>([]);
+const editDialogVisible = ref(false);
+const editingId = ref("");
 
 const form = reactive({
   scope: "discipline" as CmsTagScope,
@@ -331,7 +366,9 @@ const filteredTagNames = computed(() => {
   const keyword = query.value.trim().toLowerCase();
   return tagNames.value.filter((item) => {
     if (!keyword) return true;
-    const joined = [item.code, item.aliases.join(" "), item.label, item.description || "", item.scope].join(" ").toLowerCase();
+    const joined = [item.code, item.aliases.join(" "), item.label, item.description || "", item.scope]
+      .join(" ")
+      .toLowerCase();
     return joined.includes(keyword);
   });
 });
@@ -376,9 +413,19 @@ const bootstrapDefaults = async () => {
   try {
     const result = await api.post<{ totalSeedItems: number }>("/cms/tag-names/bootstrap");
     await fetchTagNames();
-    toast.push(`Đã nạp bộ tag chuẩn (${result.totalSeedItems} mục)`, "success");
+    toast.add({
+      severity: "success",
+      summary: "Thành công",
+      detail: `Đã nạp bộ tag chuẩn (${result.totalSeedItems} mục)`,
+      life: 3000
+    });
   } catch (err) {
-    toast.push((err as Error).message || "Không thể nạp bộ tag chuẩn", "error");
+    toast.add({
+      severity: "error",
+      summary: "Lỗi",
+      detail: (err as Error).message || "Không thể nạp bộ tag chuẩn",
+      life: 3000
+    });
   } finally {
     bootstrapping.value = false;
   }
@@ -409,7 +456,12 @@ const createTagName = async () => {
       tagNames.value = [created, ...tagNames.value];
     }
     resetForm();
-    toast.push("Đã thêm tag name", "success");
+    toast.add({
+      severity: "success",
+      summary: "Thành công",
+      detail: "Đã thêm tag name",
+      life: 3000
+    });
   } catch (err) {
     formError.value = (err as Error).message || "Không thể thêm tag name";
   } finally {
@@ -417,9 +469,8 @@ const createTagName = async () => {
   }
 };
 
-const startEdit = (item: CmsTagNameItem) => {
+const openEditDialog = (item: CmsTagNameItem) => {
   editingId.value = item._id;
-  updatingId.value = "";
   editError.value = "";
   editForm.scope = item.scope;
   editForm.code = item.code;
@@ -427,15 +478,16 @@ const startEdit = (item: CmsTagNameItem) => {
   editForm.label = item.label;
   editForm.description = item.description || "";
   editForm.isActive = item.isActive;
+  editDialogVisible.value = true;
 };
 
-const cancelEdit = () => {
+const closeEditDialog = () => {
+  editDialogVisible.value = false;
   editingId.value = "";
-  updatingId.value = "";
   editError.value = "";
 };
 
-const updateTagName = async (id: string) => {
+const updateTagName = async () => {
   editError.value = "";
   if (!editForm.code.trim()) {
     editError.value = "Vui lòng nhập code.";
@@ -446,9 +498,9 @@ const updateTagName = async (id: string) => {
     return;
   }
 
-  updatingId.value = id;
+  updating.value = true;
   try {
-    const updated = await api.patch<CmsTagNameItem>(`/cms/tag-names/${id}`, {
+    const updated = await api.patch<CmsTagNameItem>(`/cms/tag-names/${editingId.value}`, {
       scope: editForm.scope,
       code: editForm.code,
       aliases: parseAliases(editForm.aliases),
@@ -458,17 +510,36 @@ const updateTagName = async (id: string) => {
     });
 
     if (updated.scope !== scopeFilter.value) {
-      tagNames.value = tagNames.value.filter((item) => item._id !== id);
+      tagNames.value = tagNames.value.filter((item) => item._id !== editingId.value);
     } else {
-      tagNames.value = tagNames.value.map((item) => (item._id === id ? updated : item));
+      tagNames.value = tagNames.value.map((item) =>
+        item._id === editingId.value ? updated : item
+      );
     }
-    cancelEdit();
-    toast.push("Đã cập nhật tag name", "success");
+    closeEditDialog();
+    toast.add({
+      severity: "success",
+      summary: "Thành công",
+      detail: "Đã cập nhật tag name",
+      life: 3000
+    });
   } catch (err) {
     editError.value = (err as Error).message || "Không thể cập nhật tag name";
   } finally {
-    updatingId.value = "";
+    updating.value = false;
   }
+};
+
+const confirmDelete = (item: CmsTagNameItem) => {
+  confirm.require({
+    message: `Bạn có chắc chắn muốn xóa tag "${item.code}"?`,
+    header: "Xác nhận xóa",
+    icon: "pi pi-exclamation-triangle",
+    acceptLabel: "Xóa",
+    rejectLabel: "Hủy",
+    acceptClass: "p-button-danger",
+    accept: () => deleteTagName(item._id)
+  });
 };
 
 const deleteTagName = async (id: string) => {
@@ -476,9 +547,19 @@ const deleteTagName = async (id: string) => {
   try {
     await api.delete(`/cms/tag-names/${id}`);
     tagNames.value = tagNames.value.filter((item) => item._id !== id);
-    toast.push("Đã xóa tag name", "success");
+    toast.add({
+      severity: "success",
+      summary: "Thành công",
+      detail: "Đã xóa tag name",
+      life: 3000
+    });
   } catch (err) {
-    toast.push((err as Error).message || "Không thể xóa tag name", "error");
+    toast.add({
+      severity: "error",
+      summary: "Lỗi",
+      detail: (err as Error).message || "Không thể xóa tag name",
+      life: 3000
+    });
   } finally {
     deletingId.value = "";
   }
@@ -488,7 +569,7 @@ watch(
   scopeFilter,
   async (nextScope) => {
     form.scope = nextScope;
-    cancelEdit();
+    closeEditDialog();
     await fetchTagNames();
   },
   { immediate: true }

@@ -1,227 +1,111 @@
 <template>
-  <div class="grid gap-6">
-    <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p class="text-xs uppercase tracking-widest text-slate-400">CMS</p>
-          <h1 class="text-lg font-semibold text-slate-900 sm:text-xl">Trang Quản Trị Thông Tin</h1>
-        </div>
-        <div class="flex items-center gap-2">
-          <NuxtLink to="/" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">
-            Về trang bản vẽ
-          </NuxtLink>
-          <NuxtLink
-            to="/cms/tagname"
-            class="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100"
-          >
-            Quản lý tag name
-          </NuxtLink>
-        </div>
-      </div>
-      <p class="mt-2 text-sm text-slate-600">
-        Tạo nội dung dùng chung cho hệ thống. Có thể gắn tag để tìm kiếm/lọc nhanh ở các bước sau.
+  <div>
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold text-slate-900">Dashboard CMS</h1>
+      <p class="mt-1 text-sm text-slate-600">
+        Tổng quan về hệ thống quản lý nội dung công trường
       </p>
-    </section>
+    </div>
 
-    <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <h2 class="text-base font-semibold text-slate-900">Thêm Thông Tin</h2>
-      <form class="mt-4 grid gap-3" @submit.prevent="createEntry">
-        <div>
-          <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tiêu đề</label>
-          <input
-            v-model="form.title"
-            type="text"
-            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-            placeholder="Ví dụ: Quy chuẩn đặt tên bản vẽ"
-          />
-        </div>
-        <div>
-          <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Nội dung</label>
-          <textarea
-            v-model="form.content"
-            class="min-h-28 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-            placeholder="Nhập nội dung..."
-          />
-        </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tag names</label>
-            <input
-              v-model="form.tagNames"
-              type="text"
-              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-              placeholder="discipline:aa, level:og1"
-            />
+    <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <!-- User Management Card -->
+      <Card class="shadow-md">
+        <template #header>
+          <div class="bg-gradient-to-r from-blue-500 to-blue-600 p-6">
+            <i class="pi pi-user text-4xl text-white"></i>
           </div>
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Trạng thái</label>
-            <select
-              v-model="form.status"
-              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-            >
-              <option value="draft">Draft</option>
-              <option value="published">Published</option>
-            </select>
-          </div>
-        </div>
-        <p v-if="formError" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-          {{ formError }}
-        </p>
-        <div class="flex justify-end">
-          <button
-            type="submit"
-            class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
-            :disabled="saving"
-          >
-            {{ saving ? "Đang lưu..." : "Thêm thông tin" }}
-          </button>
-        </div>
-      </form>
-    </section>
-
-    <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <div class="mb-3 flex items-center justify-between gap-2">
-        <h2 class="text-base font-semibold text-slate-900">Danh Sách Thông Tin</h2>
-        <button class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100" @click="fetchEntries">
-          Làm mới
-        </button>
-      </div>
-
-      <div v-if="loading" class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">
-        Đang tải dữ liệu...
-      </div>
-      <div v-else-if="loadError" class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
-        {{ loadError }}
-      </div>
-      <div
-        v-else-if="entries.length === 0"
-        class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500"
-      >
-        Chưa có nội dung nào.
-      </div>
-      <div v-else class="space-y-3">
-        <article v-for="entry in entries" :key="entry._id" class="rounded-xl border border-slate-200 p-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h3 class="text-sm font-semibold text-slate-900 sm:text-base">{{ entry.title }}</h3>
-            <span
-              class="rounded-full px-2 py-0.5 text-[11px] font-medium uppercase"
-              :class="entry.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'"
-            >
-              {{ entry.status }}
-            </span>
-          </div>
-          <p class="mt-2 whitespace-pre-line text-sm text-slate-700">{{ entry.content }}</p>
-          <p v-if="entry.tagNames?.length" class="mt-2 text-xs text-slate-500">
-            {{ entry.tagNames.join(", ") }}
+        </template>
+        <template #title>
+          <div class="text-lg font-semibold">Quản lý tài khoản</div>
+        </template>
+        <template #content>
+          <p class="mb-4 text-sm text-slate-600">
+            Cập nhật thông tin cá nhân, đổi avatar, quản lý hồ sơ người dùng
           </p>
-          <p class="mt-2 text-[11px] text-slate-400">
-            {{ formatDate(entry.createdAt) }}
+          <NuxtLink to="/cms/user">
+            <PrimeButton label="Xem chi tiết" icon="pi pi-arrow-right" iconPos="right" class="w-full" />
+          </NuxtLink>
+        </template>
+      </Card>
+
+      <!-- CMS Entries Card -->
+      <Card class="shadow-md">
+        <template #header>
+          <div class="bg-gradient-to-r from-emerald-500 to-emerald-600 p-6">
+            <i class="pi pi-file-edit text-4xl text-white"></i>
+          </div>
+        </template>
+        <template #title>
+          <div class="text-lg font-semibold">Quản lý nội dung</div>
+        </template>
+        <template #content>
+          <p class="mb-4 text-sm text-slate-600">
+            Tạo, chỉnh sửa, xóa các bài viết và nội dung trong hệ thống
           </p>
-        </article>
-      </div>
-    </section>
+          <NuxtLink to="/cms/entries">
+            <PrimeButton label="Xem chi tiết" icon="pi pi-arrow-right" iconPos="right" class="w-full" />
+          </NuxtLink>
+        </template>
+      </Card>
+
+      <!-- Tag Names Card -->
+      <Card class="shadow-md">
+        <template #header>
+          <div class="bg-gradient-to-r from-amber-500 to-amber-600 p-6">
+            <i class="pi pi-tags text-4xl text-white"></i>
+          </div>
+        </template>
+        <template #title>
+          <div class="text-lg font-semibold">Quản lý tag name</div>
+        </template>
+        <template #content>
+          <p class="mb-4 text-sm text-slate-600">
+            Quản lý các tag name theo scope để phân loại và tìm kiếm
+          </p>
+          <NuxtLink to="/cms/tagname">
+            <PrimeButton label="Xem chi tiết" icon="pi pi-arrow-right" iconPos="right" class="w-full" />
+          </NuxtLink>
+        </template>
+      </Card>
+    </div>
+
+    <div class="mt-8">
+      <Card class="shadow-md">
+        <template #title>
+          <div class="flex items-center gap-2">
+            <i class="pi pi-info-circle text-brand-600"></i>
+            <span>Hướng dẫn sử dụng</span>
+          </div>
+        </template>
+        <template #content>
+          <div class="space-y-3 text-sm text-slate-700">
+            <div class="flex gap-3">
+              <i class="pi pi-check-circle mt-0.5 text-emerald-600"></i>
+              <div>
+                <strong>Quản lý tài khoản:</strong> Cập nhật thông tin cá nhân, đổi tên hiển thị, upload avatar mới
+              </div>
+            </div>
+            <div class="flex gap-3">
+              <i class="pi pi-check-circle mt-0.5 text-emerald-600"></i>
+              <div>
+                <strong>Quản lý nội dung:</strong> Tạo và quản lý các entry với filter, search, pagination
+              </div>
+            </div>
+            <div class="flex gap-3">
+              <i class="pi pi-check-circle mt-0.5 text-emerald-600"></i>
+              <div>
+                <strong>Quản lý tag name:</strong> Tạo và quản lý các tag theo scope khác nhau (project, discipline, level, v.v.)
+              </div>
+            </div>
+          </div>
+        </template>
+      </Card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { useApi } from "~/composables/api/useApi";
-import { useToast } from "~/composables/state/useToast";
-
-type CmsEntry = {
-  _id: string;
-  title: string;
-  content: string;
-  tagNames: string[];
-  status: "draft" | "published";
-  createdAt: string;
-};
-
-const api = useApi();
-const toast = useToast();
-
-const loading = ref(false);
-const saving = ref(false);
-const loadError = ref("");
-const formError = ref("");
-const entries = ref<CmsEntry[]>([]);
-
-const form = reactive({
-  title: "",
-  content: "",
-  tagNames: "",
-  status: "draft" as "draft" | "published"
+definePageMeta({
+  layout: "cms"
 });
-
-const parseTagNames = (value: string) => {
-  return Array.from(
-    new Set(
-      value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .map((item) => item.toLowerCase())
-    )
-  );
-};
-
-const formatDate = (value?: string) => {
-  if (!value) return "";
-  try {
-    return new Date(value).toLocaleString("vi-VN");
-  } catch {
-    return value;
-  }
-};
-
-const fetchEntries = async () => {
-  loading.value = true;
-  loadError.value = "";
-  try {
-    entries.value = await api.get<CmsEntry[]>("/cms/entries");
-  } catch (err) {
-    loadError.value = (err as Error).message || "Không tải được dữ liệu";
-    entries.value = [];
-  } finally {
-    loading.value = false;
-  }
-};
-
-const resetForm = () => {
-  form.title = "";
-  form.content = "";
-  form.tagNames = "";
-  form.status = "draft";
-  formError.value = "";
-};
-
-const createEntry = async () => {
-  formError.value = "";
-  if (!form.title.trim()) {
-    formError.value = "Vui lòng nhập tiêu đề.";
-    return;
-  }
-  if (!form.content.trim()) {
-    formError.value = "Vui lòng nhập nội dung.";
-    return;
-  }
-
-  saving.value = true;
-  try {
-    const created = await api.post<CmsEntry>("/cms/entries", {
-      title: form.title,
-      content: form.content,
-      status: form.status,
-      tagNames: parseTagNames(form.tagNames)
-    });
-    entries.value = [created, ...entries.value];
-    resetForm();
-    toast.push("Đã thêm thông tin", "success");
-  } catch (err) {
-    formError.value = (err as Error).message || "Không thể thêm thông tin";
-  } finally {
-    saving.value = false;
-  }
-};
-
-onMounted(fetchEntries);
 </script>

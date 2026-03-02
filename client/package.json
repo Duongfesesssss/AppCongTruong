@@ -13,6 +13,8 @@
     "@nuxtjs/tailwindcss": "^6.11.4",
     "nuxt": "^3.12.4",
     "pdfjs-dist": "^5.4.624",
+    "primeicons": "^7.0.0",
+    "primevue": "^4.5.4",
     "socket.io-client": "^4.8.3",
     "tesseract.js": "^6.0.1",
     "typescript-eslint": "^8.56.1",
