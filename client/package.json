@@ -17,7 +17,9 @@
     "primevue": "^4.5.4",
     "socket.io-client": "^4.8.3",
     "tesseract.js": "^6.0.1",
+    "three": "^0.149.0",
     "typescript-eslint": "^8.56.1",
+    "web-ifc-three": "^0.0.126",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },

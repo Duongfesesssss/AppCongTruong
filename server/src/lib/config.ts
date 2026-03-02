@@ -20,6 +20,7 @@ export const config = {
   adminPassword: process.env.ADMIN_PASSWORD ?? "",
   uploadMaxPdfMb: toNumber(process.env.UPLOAD_MAX_PDF_MB, 100),
   uploadMaxImageMb: toNumber(process.env.UPLOAD_MAX_IMAGE_MB, 20),
+  uploadMaxIfcMb: toNumber(process.env.UPLOAD_MAX_IFC_MB, 200), // IFC files can be larger
 
   // Storage configuration (local or s3)
   storageType: (process.env.STORAGE_TYPE ?? "local") as "local" | "s3",

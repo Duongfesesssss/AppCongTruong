@@ -10,6 +10,8 @@ export type DrawingParsedMetadata = {
   fileTypeCode?: string;
 };
 
+export type DrawingFileType = "2d" | "3d" | "hybrid";
+
 export type DrawingDocument = {
   projectId: mongoose.Types.ObjectId;
   buildingId?: mongoose.Types.ObjectId;
@@ -26,6 +28,16 @@ export type DrawingDocument = {
   storageKey: string;
   mimeType: string;
   size: number;
+  // IFC 3D support fields
+  fileType: DrawingFileType; // Loại file: 2d (PDF), 3d (IFC), hybrid (có cả 2)
+  linkedDrawingId?: mongoose.Types.ObjectId; // ID của file liên kết (PDF ↔ IFC)
+  ifcMetadata?: {
+    ifcSchema?: string; // IFC2X3, IFC4, IFC4X3, etc.
+    containsBuildingElements?: boolean;
+    elementCount?: number;
+    validated?: boolean;
+    validatedAt?: Date;
+  };
   createdAt: Date;
   updatedAt: Date;
 };
@@ -63,7 +75,23 @@ const drawingSchema = new Schema<DrawingDocument>(
     originalName: { type: String, required: true },
     storageKey: { type: String, required: true },
     mimeType: { type: String, required: true },
-    size: { type: Number, required: true }
+    size: { type: Number, required: true },
+    // IFC 3D support fields
+    fileType: {
+      type: String,
+      enum: ["2d", "3d", "hybrid"],
+      required: true,
+      default: "2d",
+      index: true
+    },
+    linkedDrawingId: { type: Schema.Types.ObjectId, ref: "Drawing", index: true },
+    ifcMetadata: {
+      ifcSchema: { type: String, uppercase: true, trim: true },
+      containsBuildingElements: { type: Boolean },
+      elementCount: { type: Number },
+      validated: { type: Boolean },
+      validatedAt: { type: Date }
+    }
   },
   { timestamps: true }
 );

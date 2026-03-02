@@ -21,13 +21,32 @@ import { deleteFromS3, getS3Stream } from "../lib/s3";
 import { BuildingModel } from "../buildings/building.model";
 import { FloorModel } from "../floors/floor.model";
 import { DisciplineModel } from "../disciplines/discipline.model";
+import { validateIfcFile } from "./ifc-validator";
+import { linkDrawingsSchema, unlinkDrawingSchema } from "./drawing.schema";
 
 const router = Router();
-const upload = createUploader({
+
+// Separate uploaders for PDF and IFC files
+const uploadPdf = createUploader({
   subDir: "drawings",
   allowedMime: ["application/pdf"],
   maxMb: config.uploadMaxPdfMb
 });
+
+const uploadIfc = createUploader({
+  subDir: "drawings",
+  allowedMime: [
+    "application/x-step",
+    "application/ifc",
+    "model/ifc",
+    "text/ifc",
+    "text/plain" // IFC files are text-based
+  ],
+  maxMb: config.uploadMaxIfcMb
+});
+
+// Legacy support - use uploadPdf for existing endpoint
+const upload = uploadPdf;
 
 const getLocalDrawingPath = (storageKey: string) => {
   const safeKey = path.basename(storageKey);
@@ -774,6 +793,310 @@ router.delete(
     }
 
     return sendSuccess(res, { ok: true });
+  })
+);
+
+/**
+ * POST /drawings/ifc
+ * Upload IFC 3D file
+ */
+router.post(
+  "/ifc",
+  requireAuth,
+  uploadLimiter,
+  uploadIfc.single("file"),
+  validate(createDrawingSchema),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      throw errors.validation("Yeu cau file IFC upload");
+    }
+
+    const {
+      projectId,
+      buildingId,
+      floorId,
+      disciplineId,
+      drawingCode: drawingCodeInput,
+      name,
+      tagNames,
+      linkedDrawingId
+    } = req.body as {
+      projectId: string;
+      buildingId?: string;
+      floorId?: string;
+      disciplineId?: string;
+      drawingCode?: string;
+      name?: string;
+      tagNames?: string[];
+      linkedDrawingId?: string;
+    };
+
+    const project = await ProjectModel.findById(projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Project khong ton tai hoac khong co quyen");
+
+    // Validate IFC file
+    const validationResult = await validateIfcFile(req.file.buffer, true);
+    if (!validationResult.valid) {
+      throw errors.validation(
+        `File IFC khong hop le: ${validationResult.errors?.join(", ") || "Unknown error"}`
+      );
+    }
+
+    // Check if linked drawing exists and belongs to same project
+    if (linkedDrawingId) {
+      const linkedDrawing = await DrawingModel.findById(linkedDrawingId);
+      if (!linkedDrawing) {
+        throw errors.validation("Linked drawing khong ton tai");
+      }
+      if (linkedDrawing.projectId.toString() !== projectId) {
+        throw errors.validation("Linked drawing phai cung project");
+      }
+      if (linkedDrawing.fileType !== "2d") {
+        throw errors.validation("Linked drawing phai la file 2D (PDF)");
+      }
+    }
+
+    // Upload file
+    const storageKey = await handleFileUpload(req.file, "drawings");
+
+    // Build drawing code similar to PDF upload
+    let finalDrawingCode: string;
+    if (drawingCodeInput) {
+      finalDrawingCode = normalizeDrawingCode(drawingCodeInput);
+    } else {
+      // Auto-generate code
+      const codeSegments: string[] = [];
+      if (buildingId) {
+        const building = await BuildingModel.findById(buildingId);
+        if (building) codeSegments.push(building.code);
+      }
+      if (floorId) {
+        const floor = await FloorModel.findById(floorId);
+        if (floor) codeSegments.push(floor.code);
+      }
+      if (disciplineId) {
+        const discipline = await DisciplineModel.findById(disciplineId);
+        if (discipline) codeSegments.push(discipline.code);
+      }
+      const codeBase = codeSegments.length > 0 ? codeSegments.join("-") : "IFC";
+
+      // Use simplified auto-code generation for IFC
+      const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const codePattern = new RegExp(`^${escapeRegex(codeBase)}-(\\d{3})$`);
+      const existingCodes = await DrawingModel.find({
+        projectId,
+        drawingCode: { $regex: `^${escapeRegex(codeBase)}-\\d{3}$` }
+      })
+        .select("drawingCode")
+        .lean();
+
+      let maxSequence = 0;
+      existingCodes.forEach((item) => {
+        const match = String(item.drawingCode || "").toUpperCase().match(codePattern);
+        if (!match) return;
+        const value = Number(match[1]);
+        if (Number.isFinite(value) && value > maxSequence) {
+          maxSequence = value;
+        }
+      });
+
+      finalDrawingCode = `${codeBase}-${String(maxSequence + 1).padStart(3, "0")}`;
+    }
+
+    // Get version info
+    const existingVersions = await DrawingModel.find({
+      projectId,
+      drawingCode: finalDrawingCode
+    })
+      .sort({ versionIndex: -1 })
+      .limit(1)
+      .select("versionIndex");
+
+    const versionIndex = existingVersions.length > 0 ? existingVersions[0].versionIndex + 1 : 1;
+
+    // Mark old versions as not latest
+    if (versionIndex > 1) {
+      await DrawingModel.updateMany(
+        { projectId, drawingCode: finalDrawingCode },
+        { isLatestVersion: false }
+      );
+    }
+
+    const sortIndex = await getNextSortIndex(DrawingModel, {
+      projectId,
+      ...(disciplineId ? { disciplineId } : {}),
+      ...(floorId ? { floorId } : {}),
+      ...(buildingId ? { buildingId } : {})
+    });
+
+    // Merge tags
+    const autoTags: string[] = [];
+    if (buildingId) {
+      const building = await BuildingModel.findById(buildingId);
+      if (building) autoTags.push(`building:${building.code.toLowerCase()}`);
+    }
+    if (floorId) {
+      const floor = await FloorModel.findById(floorId);
+      if (floor) autoTags.push(`floor:${floor.code.toLowerCase()}`);
+    }
+    if (disciplineId) {
+      const discipline = await DisciplineModel.findById(disciplineId);
+      if (discipline) autoTags.push(`discipline:${discipline.code.toLowerCase()}`);
+    }
+    autoTags.push("3d", "ifc");
+
+    const finalTagNames = mergeTagNames(autoTags, tagNames);
+
+    // Create drawing document
+    const drawing = await DrawingModel.create({
+      projectId,
+      buildingId: buildingId || undefined,
+      floorId: floorId || undefined,
+      disciplineId: disciplineId || undefined,
+      name: name || finalDrawingCode,
+      drawingCode: finalDrawingCode,
+      versionIndex,
+      isLatestVersion: true,
+      tagNames: finalTagNames,
+      sortIndex,
+      originalName: req.file.originalname,
+      storageKey,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      fileType: linkedDrawingId ? "hybrid" : "3d",
+      linkedDrawingId: linkedDrawingId || undefined,
+      ifcMetadata: {
+        ifcSchema: validationResult.schema,
+        containsBuildingElements: validationResult.containsBuildingElements,
+        elementCount: validationResult.elementCount,
+        validated: true,
+        validatedAt: new Date()
+      }
+    });
+
+    // If linked, update the linked drawing
+    if (linkedDrawingId) {
+      await DrawingModel.findByIdAndUpdate(linkedDrawingId, {
+        linkedDrawingId: drawing._id,
+        fileType: "hybrid"
+      });
+    }
+
+    return sendSuccess(res, {
+      ...drawing.toObject(),
+      validation: {
+        valid: validationResult.valid,
+        warnings: validationResult.warnings
+      }
+    });
+  })
+);
+
+/**
+ * POST /drawings/link
+ * Link 2D PDF and 3D IFC files
+ */
+router.post(
+  "/link",
+  requireAuth,
+  validate(linkDrawingsSchema),
+  asyncHandler(async (req, res) => {
+    const { drawing2dId, drawing3dId } = req.body as {
+      drawing2dId: string;
+      drawing3dId: string;
+    };
+
+    const drawing2d = await DrawingModel.findById(drawing2dId);
+    const drawing3d = await DrawingModel.findById(drawing3dId);
+
+    if (!drawing2d || !drawing3d) {
+      throw errors.notFound("Drawing khong ton tai");
+    }
+
+    // Verify project access
+    const project = await ProjectModel.findById(drawing2d.projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Khong co quyen");
+
+    // Validate same project
+    if (drawing2d.projectId.toString() !== drawing3d.projectId.toString()) {
+      throw errors.validation("Hai drawing phai cung project");
+    }
+
+    // Validate file types
+    if (drawing2d.mimeType !== "application/pdf") {
+      throw errors.validation("drawing2d phai la file PDF");
+    }
+
+    const is3dFile =
+      drawing3d.mimeType === "application/x-step" ||
+      drawing3d.mimeType === "application/ifc" ||
+      drawing3d.mimeType === "model/ifc" ||
+      drawing3d.mimeType === "text/ifc" ||
+      (drawing3d.mimeType === "text/plain" && drawing3d.originalName.toLowerCase().endsWith(".ifc"));
+
+    if (!is3dFile) {
+      throw errors.validation("drawing3d phai la file IFC");
+    }
+
+    // Check if already linked
+    if (drawing2d.linkedDrawingId || drawing3d.linkedDrawingId) {
+      throw errors.validation("Mot trong hai drawing da duoc link voi file khac");
+    }
+
+    // Link drawings
+    drawing2d.linkedDrawingId = drawing3d._id;
+    drawing2d.fileType = "hybrid";
+    await drawing2d.save();
+
+    drawing3d.linkedDrawingId = drawing2d._id;
+    drawing3d.fileType = "hybrid";
+    await drawing3d.save();
+
+    return sendSuccess(res, {
+      drawing2d: drawing2d.toObject(),
+      drawing3d: drawing3d.toObject()
+    });
+  })
+);
+
+/**
+ * DELETE /drawings/:id/unlink
+ * Unlink a drawing from its paired file
+ */
+router.delete(
+  "/:id/unlink",
+  requireAuth,
+  validate(unlinkDrawingSchema),
+  asyncHandler(async (req, res) => {
+    const drawing = await DrawingModel.findById(req.params.id);
+    if (!drawing) {
+      throw errors.notFound("Drawing khong ton tai");
+    }
+
+    const project = await ProjectModel.findById(drawing.projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Khong co quyen");
+
+    if (!drawing.linkedDrawingId) {
+      throw errors.validation("Drawing khong co link");
+    }
+
+    const linkedDrawing = await DrawingModel.findById(drawing.linkedDrawingId);
+
+    // Unlink both drawings
+    drawing.linkedDrawingId = undefined;
+    drawing.fileType = drawing.mimeType === "application/pdf" ? "2d" : "3d";
+    await drawing.save();
+
+    if (linkedDrawing) {
+      linkedDrawing.linkedDrawingId = undefined;
+      linkedDrawing.fileType = linkedDrawing.mimeType === "application/pdf" ? "2d" : "3d";
+      await linkedDrawing.save();
+    }
+
+    return sendSuccess(res, {
+      drawing: drawing.toObject(),
+      linkedDrawing: linkedDrawing?.toObject()
+    });
   })
 );
 
