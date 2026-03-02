@@ -30,7 +30,9 @@ export const createDrawingSchema = z.object({
     drawingCode: z.string().min(3).max(120).optional(),
     name: z.string().min(1).optional(),
     tagNames: z.preprocess(parseTagNamesInput, z.array(z.string().min(1).max(80)).max(30).optional()),
-    ocrText: z.string().max(20000).optional()
+    ocrText: z.string().max(20000).optional(),
+    fileType: z.enum(["2d", "3d", "hybrid"]).optional(),
+    linkedDrawingId: objectIdSchema.optional()
   })
 });
 
@@ -52,5 +54,18 @@ export const listDrawingSchema = z.object({
         return false;
       }, z.boolean())
       .optional()
+  })
+});
+
+export const linkDrawingsSchema = z.object({
+  body: z.object({
+    drawing2dId: objectIdSchema,
+    drawing3dId: objectIdSchema
+  })
+});
+
+export const unlinkDrawingSchema = z.object({
+  params: z.object({
+    id: objectIdSchema
   })
 });

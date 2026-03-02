@@ -14,7 +14,13 @@ const mimeToExt: Record<string, string> = {
   "image/png": ".png",
   "image/webp": ".webp",
   "application/vnd.ms-excel": ".xls",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx"
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  // IFC mime types
+  "application/x-step": ".ifc",
+  "application/ifc": ".ifc",
+  "model/ifc": ".ifc",
+  "text/ifc": ".ifc",
+  "text/plain": ".ifc" // IFC files are sometimes detected as plain text
 };
 
 type UploadOptions = {
