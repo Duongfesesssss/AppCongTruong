@@ -8,7 +8,7 @@ WORKDIR /app
 # Copy package files AND scripts folder (needed for postinstall)
 COPY package.json package-lock.json* ./
 COPY scripts ./scripts
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # Build the application
 FROM base AS builder
