@@ -257,6 +257,7 @@
       :initial-annotations="annotatingPhoto?.annotations || []"
       @close="closeAnnotator"
       @saved="handleAnnotationSaved"
+      @annotations-captured="handleAnnotationsCaptured"
     />
 
     <!-- Photo Upload Modal -->
@@ -674,9 +675,17 @@ const openAnnotator = (photo: any) => {
 const closeAnnotator = () => {
   console.log("closeAnnotator called");
   annotatingPhoto.value = null;
-  // Reload after a short delay to pick up any annotations saved by persistAnnotationsOnClose
+  // Reload after delay as a server-sync safety net
   if (process.client && navigator.onLine) {
-    setTimeout(() => { void loadTask(); }, 1500);
+    setTimeout(() => { void loadTask(); }, 2000);
+  }
+};
+
+const handleAnnotationsCaptured = (data: { photoId: string; annotations: any[] }) => {
+  // Immediately update photos.value so reopening the annotator shows correct lines
+  const idx = photos.value.findIndex((p) => p._id === data.photoId);
+  if (idx !== -1) {
+    photos.value[idx] = { ...photos.value[idx], annotations: data.annotations };
   }
 };
 

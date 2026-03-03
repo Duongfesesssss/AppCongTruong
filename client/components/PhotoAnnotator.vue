@@ -325,6 +325,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "close"): void;
   (e: "saved"): void;
+  (e: "annotationsCaptured", data: { photoId: string; annotations: Line[] }): void;
 }>();
 
 const api = useApi();
@@ -1630,6 +1631,14 @@ const stopSession = () => {
   pinchState = null;
   imageLoadRequestId += 1;
   isImageLoading.value = false;
+  // Emit current annotations synchronously so parent can update photos.value immediately,
+  // avoiding stale initialAnnotations on quick reopen.
+  if (cachedPhotoId.value) {
+    emit("annotationsCaptured", {
+      photoId: cachedPhotoId.value,
+      annotations: lines.value.length > 0 ? normalizeLines(lines.value) : []
+    });
+  }
   persistAnnotationsOnClose();
 };
 
