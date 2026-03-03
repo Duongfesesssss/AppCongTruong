@@ -39,9 +39,44 @@
 
       <!-- Drawing -->
       <template v-else-if="type === 'drawing'">
+        <!-- Tab 2D / 3D -->
+        <div class="flex overflow-hidden rounded-lg border border-slate-200">
+          <button
+            type="button"
+            class="flex-1 px-3 py-2 text-xs font-medium transition-colors"
+            :class="drawingMode === '2d' ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-50'"
+            @click="drawingMode = '2d'"
+          >
+            2D PDF
+          </button>
+          <button
+            type="button"
+            class="flex-1 border-l border-slate-200 px-3 py-2 text-xs font-medium transition-colors"
+            :class="drawingMode === '3d' ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-50'"
+            @click="drawingMode = '3d'"
+          >
+            3D IFC
+          </button>
+        </div>
+
+        <!-- 3D IFC Upload -->
+        <template v-if="drawingMode === '3d'">
+          <div>
+            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">File IFC <span class="text-rose-400">*</span></label>
+            <input type="file" class="input" accept=".ifc" @change="handleIfcFileChange" :required="drawingMode === '3d'" />
+            <p class="mt-1 text-[11px] text-slate-500">File định dạng .ifc từ phần mềm BIM (Revit, ArchiCAD...).</p>
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tên bản vẽ 3D <span class="text-rose-400">*</span></label>
+            <input v-model="ifcName" type="text" class="input" placeholder="VD: MODEL-3D-TONG-THE" :required="drawingMode === '3d'" />
+          </div>
+        </template>
+
+        <!-- 2D PDF Upload -->
+        <template v-else>
         <div>
           <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">File PDF <span class="text-rose-400">*</span></label>
-          <input type="file" class="input" accept="application/pdf" @change="handleFileChange" required />
+          <input type="file" class="input" accept="application/pdf" @change="handleFileChange" :required="drawingMode === '2d'" />
           <p class="mt-1 text-[11px] text-slate-500">
             Chỉ cần tải file PDF. Hệ thống sẽ auto-scan metadata theo quy tắc trong huongdanv1.md.
           </p>
@@ -159,6 +194,7 @@
             {{ drawingValidationMessage }}
           </p>
         </div>
+        </template><!-- end 2D -->
       </template>
 
       <!-- Task -->
@@ -255,6 +291,9 @@ const { fetchTree } = useProjectTree();
 
 const submitting = ref(false);
 const errorMsg = ref("");
+const drawingMode = ref<'2d' | '3d'>('2d');
+const ifcFile = ref<File | null>(null);
+const ifcName = ref('');
 const uploadFile = ref<File | null>(null);
 const drawingAutoScanStatus = ref<"idle" | "scanning" | "matched" | "unmatched" | "error">("idle");
 const drawingAutoScanSource = ref<"filename" | "ocr" | "none">("none");
@@ -886,6 +925,7 @@ const requiresDrawingIntervention = computed(() => {
 
 const canSubmitDrawing = computed(() => {
   if (props.type !== "drawing") return true;
+  if (drawingMode.value === "3d") return !!ifcFile.value && !!ifcName.value.trim();
   return !!uploadFile.value && !drawingValidationMessage.value;
 });
 
@@ -1090,6 +1130,15 @@ const handleFileChange = async (e: Event) => {
   }
 };
 
+const handleIfcFileChange = (e: Event) => {
+  const input = e.target as HTMLInputElement;
+  if (!input.files || !input.files[0]) return;
+  ifcFile.value = input.files[0];
+  if (!ifcName.value) {
+    ifcName.value = input.files[0].name.replace(/\.ifc$/i, "").toUpperCase();
+  }
+};
+
 const resetForm = () => {
   form.name = "";
   form.description = "";
@@ -1100,6 +1149,9 @@ const resetForm = () => {
   form.pinY = props.initialPinY ?? 0.5;
 
   uploadFile.value = null;
+  ifcFile.value = null;
+  ifcName.value = "";
+  drawingMode.value = "2d";
   drawingAutoScanStatus.value = "idle";
   drawingAutoScanSource.value = "none";
   drawingAutoScanText.value = "";
@@ -1118,6 +1170,7 @@ const resetForm = () => {
 };
 
 const handleSubmit = async () => {
+  if (submitting.value) return;
   submitting.value = true;
   errorMsg.value = "";
 
@@ -1155,12 +1208,33 @@ const handleSubmit = async () => {
         break;
 
       case "drawing": {
-        if (!uploadFile.value) {
-          errorMsg.value = "Vui lòng chọn file PDF";
-          return;
-        }
         if (!props.parentId) {
           errorMsg.value = "Cần chọn project để tải bản vẽ";
+          return;
+        }
+
+        // 3D IFC upload
+        if (drawingMode.value === "3d") {
+          if (!ifcFile.value) {
+            errorMsg.value = "Vui lòng chọn file IFC";
+            return;
+          }
+          if (!ifcName.value.trim()) {
+            errorMsg.value = "Vui lòng nhập tên bản vẽ 3D";
+            return;
+          }
+          const ifcFormData = new FormData();
+          ifcFormData.append("projectId", props.parentId);
+          ifcFormData.append("name", ifcName.value.trim().toUpperCase());
+          ifcFormData.append("drawingCode", ifcName.value.trim().toUpperCase());
+          ifcFormData.append("file", ifcFile.value);
+          result = await api.upload("/drawings/ifc", ifcFormData);
+          break;
+        }
+
+        // 2D PDF upload
+        if (!uploadFile.value) {
+          errorMsg.value = "Vui lòng chọn file PDF";
           return;
         }
         if (drawingValidationMessage.value) {

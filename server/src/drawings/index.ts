@@ -21,7 +21,7 @@ import { deleteFromS3, getS3Stream } from "../lib/s3";
 import { BuildingModel } from "../buildings/building.model";
 import { FloorModel } from "../floors/floor.model";
 import { DisciplineModel } from "../disciplines/discipline.model";
-import { validateIfcFile } from "./ifc-validator";
+import { validateIfcFile, validateIfcFilePath } from "./ifc-validator";
 import { linkDrawingsSchema, unlinkDrawingSchema } from "./drawing.schema";
 
 const router = Router();
@@ -40,7 +40,8 @@ const uploadIfc = createUploader({
     "application/ifc",
     "model/ifc",
     "text/ifc",
-    "text/plain" // IFC files are text-based
+    "text/plain", // IFC files are text-based
+    "application/octet-stream" // Windows browsers often send .ifc as octet-stream
   ],
   maxMb: config.uploadMaxIfcMb
 });
@@ -674,7 +675,17 @@ router.get(
 
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    res.setHeader("Content-Type", drawing.mimeType);
+
+    // Normalize Content-Type: IFC files may have been stored as octet-stream on Windows
+    const isIfcFile =
+      drawing.fileType === "3d" ||
+      (drawing.originalName || "").toLowerCase().endsWith(".ifc") ||
+      drawing.mimeType === "application/x-step" ||
+      drawing.mimeType === "application/ifc" ||
+      drawing.mimeType === "model/ifc" ||
+      drawing.mimeType === "text/ifc";
+    const contentType = isIfcFile ? "application/ifc" : drawing.mimeType;
+    res.setHeader("Content-Type", contentType);
 
     const safeName = path.basename(drawing.originalName || drawing.storageKey);
     res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
@@ -834,8 +845,10 @@ router.post(
     const project = await ProjectModel.findById(projectId);
     ensureProjectRole(project, req.user!.id, "admin", "Project khong ton tai hoac khong co quyen");
 
-    // Validate IFC file
-    const validationResult = await validateIfcFile(req.file.buffer, true);
+    // Validate IFC file — buffer available for S3/memory storage, path for local/disk storage
+    const validationResult = req.file.buffer
+      ? await validateIfcFile(req.file.buffer, true)
+      : await validateIfcFilePath(req.file.path);
     if (!validationResult.valid) {
       throw errors.validation(
         `File IFC khong hop le: ${validationResult.errors?.join(", ") || "Unknown error"}`

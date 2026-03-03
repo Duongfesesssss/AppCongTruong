@@ -674,6 +674,10 @@ const openAnnotator = (photo: any) => {
 const closeAnnotator = () => {
   console.log("closeAnnotator called");
   annotatingPhoto.value = null;
+  // Reload after a short delay to pick up any annotations saved by persistAnnotationsOnClose
+  if (process.client && navigator.onLine) {
+    setTimeout(() => { void loadTask(); }, 1500);
+  }
 };
 
 const handleAnnotationSaved = async () => {

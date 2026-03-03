@@ -144,14 +144,16 @@ const loadIfcFile = async (drawing: Drawing) => {
       currentModel = null;
     }
 
-    // Build file URL
+    // Build file URL with auth token (IFCLoader uses raw fetch, can't set headers)
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-    const fileUrl = `${baseUrl}/api/drawings/${drawing._id}/file`;
+    const accessToken = localStorage.getItem('accessToken');
+    const tokenParam = accessToken ? `?token=${encodeURIComponent(accessToken)}` : '';
+    const fileUrl = `${baseUrl}/api/drawings/${drawing._id}/file${tokenParam}`;
 
     // Load IFC model
     const model = await ifcLoader.loadAsync(
       fileUrl,
-      (event) => {
+      (event: ProgressEvent) => {
         if (event.lengthComputable) {
           loadingProgress.value = Math.round((event.loaded / event.total) * 100);
         }
@@ -307,20 +309,23 @@ onUnmounted(() => {
 
     <!-- Viewport -->
     <div class="relative h-[55vh] overflow-hidden bg-slate-50 sm:h-[70vh]">
-      <div v-if="isLoading" class="flex h-full items-center justify-center text-sm text-slate-500">
+      <!-- Canvas luôn tồn tại trong DOM để Three.js không bị orphan khi loading state thay đổi -->
+      <div ref="containerRef" class="h-full w-full"></div>
+
+      <!-- Overlays (absolute, đè lên canvas) -->
+      <div v-if="isLoading" class="absolute inset-0 flex items-center justify-center bg-slate-50 text-sm text-slate-500">
         <svg class="mr-2 h-5 w-5 animate-spin text-slate-400" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
         Đang tải model 3D...
       </div>
-      <div v-else-if="displayError" class="flex h-full items-center justify-center text-sm text-rose-600">
+      <div v-else-if="displayError" class="absolute inset-0 flex items-center justify-center bg-slate-50 text-sm text-rose-600">
         {{ displayError }}
       </div>
-      <div v-else-if="!drawing" class="flex h-full items-center justify-center text-sm text-slate-500">
+      <div v-else-if="!drawing" class="absolute inset-0 flex items-center justify-center bg-slate-50 text-sm text-slate-500">
         Chọn file IFC 3D từ cây thư mục để xem.
       </div>
-      <div v-else ref="containerRef" class="h-full w-full"></div>
     </div>
 
     <!-- Footer info -->

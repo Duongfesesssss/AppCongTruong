@@ -1,11 +1,8 @@
-﻿@tailwind base;
+﻿@import "primeicons/primeicons.css";
+
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* PrimeVue CSS */
-@import "primevue/resources/themes/lara-light-blue/theme.css";
-@import "primevue/resources/primevue.min.css";
-@import "primeicons/primeicons.css";
 
 :root {
   color-scheme: light;

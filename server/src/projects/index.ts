@@ -115,27 +115,40 @@ router.post(
       .select("sortIndex")
       .lean();
     const nextSortIndex = (lastProject?.sortIndex ?? 0) + 1;
-    const projectCode = buildUniqueProjectCode(
-      { name, code },
-      await listProjectCodesByUser(req.user!.id)
-    );
 
-    const project = await ProjectModel.create({
-      userId: req.user!.id,
-      members: [
-        {
+    // Retry up to 3 times to handle race conditions on unique code constraint
+    let project: ProjectDocWithMethods | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const projectCode = buildUniqueProjectCode(
+        { name, code },
+        await listProjectCodesByUser(req.user!.id)
+      );
+      try {
+        project = (await ProjectModel.create({
           userId: req.user!.id,
-          role: "admin",
-          addedBy: req.user!.id
-        }
-      ],
-      name: sanitizeText(name),
-      code: projectCode,
-      sortIndex: nextSortIndex,
-      description: description ? sanitizeText(description) : undefined
-    });
+          members: [
+            {
+              userId: req.user!.id,
+              role: "admin",
+              addedBy: req.user!.id
+            }
+          ],
+          name: sanitizeText(name),
+          code: projectCode,
+          sortIndex: nextSortIndex,
+          description: description ? sanitizeText(description) : undefined
+        })) as ProjectDocWithMethods;
+        break;
+      } catch (err: unknown) {
+        const isDuplicate =
+          err !== null &&
+          typeof err === "object" &&
+          (err as { code?: number }).code === 11000;
+        if (!isDuplicate || attempt >= 2) throw err;
+      }
+    }
 
-    return sendSuccess(res, toProjectResponse(project as ProjectDocWithMethods, req.user!.id), {}, 201);
+    return sendSuccess(res, toProjectResponse(project!, req.user!.id), {}, 201);
   })
 );
 

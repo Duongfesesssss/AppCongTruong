@@ -107,7 +107,14 @@
             {{ compareOpacityPercent }}%
           </label>
         </div>
+        <IfcViewer
+          v-if="(drawing as any)?.fileType === '3d'"
+          :drawing="(drawing as any)"
+          :loading="loading"
+          :error="error"
+        />
         <PlanViewer
+          v-else
           :drawing="drawing"
           :compare-drawing-id="compareDrawingId || undefined"
           :compare-blend-mode="compareBlendMode"
