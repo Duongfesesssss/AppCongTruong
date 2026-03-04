@@ -145,10 +145,10 @@ const loadIfcFile = async (drawing: Drawing) => {
     }
 
     // Build file URL with auth token (IFCLoader uses raw fetch, can't set headers)
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+    const { public: { apiBase } } = useRuntimeConfig();
     const accessToken = localStorage.getItem('accessToken');
     const tokenParam = accessToken ? `?token=${encodeURIComponent(accessToken)}` : '';
-    const fileUrl = `${baseUrl}/api/drawings/${drawing._id}/file${tokenParam}`;
+    const fileUrl = `${apiBase}/drawings/${drawing._id}/file${tokenParam}`;
 
     // Load IFC model
     const model = await ifcLoader.loadAsync(
