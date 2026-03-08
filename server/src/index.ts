@@ -33,6 +33,7 @@ import chatRoutes from "./chats";
 import cmsRoutes from "./cms";
 import { seedAdminUser } from "./auth/seed-admin";
 import { initRealtimeServer } from "./realtime/hub";
+import { initMailTransporter } from "./lib/mail";
 
 const app = express();
 const httpServer = createServer(app);
@@ -121,6 +122,7 @@ const start = async () => {
     await connectDb();
     await seedAdminUser();
     initRealtimeServer(httpServer);
+    initMailTransporter();
     httpServer.listen(config.port, () => {
       logger.info(`Server running at http://localhost:${config.port}`);
     });

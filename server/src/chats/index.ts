@@ -16,6 +16,7 @@ import { ensureProjectRole } from "../projects/project-access";
 import { UserModel } from "../users/user.model";
 import { publishToUsers } from "../realtime/hub";
 import { createAndPublishNotifications } from "../notifications/service";
+import { sendMentionEmail } from "../lib/mail";
 import { ChatMessageModel, type ChatDeepLink, type ChatScope } from "./chat.model";
 import {
   chatMessageIdSchema,
@@ -280,6 +281,33 @@ router.post(
           }
         }))
       );
+
+      // Send email notifications for mentions
+      let projectName: string | undefined;
+      if (scope === "project" && projectId) {
+        const project = await ProjectModel.findById(projectId);
+        projectName = project?.name;
+      }
+
+      // Send emails in parallel without blocking the response
+      Promise.all(
+        mentionedUsers
+          .filter((user) => user._id.toString() !== req.user!.id)
+          .map((user) =>
+            sendMentionEmail({
+              recipientEmail: user.email,
+              recipientName: user.name || user.email,
+              actorName: req.user!.name || req.user!.email,
+              message: safeContent.slice(0, 180),
+              scope,
+              projectName,
+              deepLinkUrl: undefined // Can be enhanced later with full URL
+            })
+          )
+      ).catch((error) => {
+        // Log error but don't fail the request
+        console.error("Failed to send mention emails:", error);
+      });
     }
 
     return sendSuccess(res, payload, {}, 201);
