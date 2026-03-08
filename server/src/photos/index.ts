@@ -16,7 +16,7 @@ import { uploadLimiter } from "../middlewares/rate-limit";
 import { deleteFromS3, getS3Stream } from "../lib/s3";
 import { TaskModel } from "../tasks/task.model";
 import { ProjectModel } from "../projects/project.model";
-import { ensureProjectRole } from "../projects/project-access";
+import { ensureProjectRole, canDeleteResource } from "../projects/project-access";
 import { PhotoModel } from "./photo.model";
 import {
   bulkPhotoJobIdSchema,
@@ -437,12 +437,9 @@ router.delete(
     const task = await TaskModel.findById(photo.taskId);
     if (!task) throw errors.notFound("Photo khong ton tai");
 
-    ensureProjectRole(
-      await ProjectModel.findById(task.projectId),
-      req.user!.id,
-      "admin",
-      "Photo khong ton tai hoac khong co quyen"
-    );
+    // Check delete permission: chỉ admin hoặc người tạo mới được xóa
+    const project = await ProjectModel.findById(task.projectId);
+    canDeleteResource(project, req.user!.id, photo.createdBy, "Photo khong ton tai hoac khong co quyen");
 
     // Delete file from storage
     if (config.storageType === "s3") {

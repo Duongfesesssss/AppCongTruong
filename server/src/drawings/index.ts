@@ -8,7 +8,7 @@ import { validate } from "../middlewares/validation";
 import { requireAuth } from "../middlewares/require-auth";
 import { errors } from "../lib/errors";
 import { ProjectModel } from "../projects/project.model";
-import { buildProjectAccessFilter, ensureProjectRole } from "../projects/project-access";
+import { buildProjectAccessFilter, ensureProjectRole, canDeleteResource } from "../projects/project-access";
 import { createDrawingSchema, drawingIdSchema, listDrawingSchema } from "./drawing.schema";
 import { DrawingModel } from "./drawing.model";
 import { parseDrawingFilename, parseDrawingMetadataFromText } from "./filename-parser";
@@ -763,12 +763,9 @@ router.delete(
     const drawing = await DrawingModel.findById(req.params.id);
     if (!drawing) throw errors.notFound("Drawing khong ton tai");
 
-    ensureProjectRole(
-      await ProjectModel.findById(drawing.projectId),
-      req.user!.id,
-      "admin",
-      "Drawing khong ton tai hoac khong co quyen"
-    );
+    // Check delete permission: chỉ admin hoặc người tạo mới được xóa
+    const project = await ProjectModel.findById(drawing.projectId);
+    canDeleteResource(project, req.user!.id, drawing.createdBy, "Drawing khong ton tai hoac khong co quyen");
 
     const storageRefCount = await DrawingModel.countDocuments({
       storageKey: drawing.storageKey,
