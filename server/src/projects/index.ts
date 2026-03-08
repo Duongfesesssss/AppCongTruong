@@ -16,7 +16,8 @@ import {
   listProjectMembersSchema,
   listProjectSchema,
   projectIdParamSchema,
-  removeProjectMemberSchema
+  removeProjectMemberSchema,
+  updateDrawingMetaConfigSchema
 } from "./project.schema";
 
 const router = Router();
@@ -345,6 +346,40 @@ router.delete(
 
     await ProjectModel.deleteOne({ _id: req.params.id });
     return sendSuccess(res, { ok: true });
+  })
+);
+
+router.get(
+  "/:id/drawing-config",
+  requireAuth,
+  validate(projectIdParamSchema),
+  asyncHandler(async (req, res) => {
+    const project = await ProjectModel.findById(req.params.id).lean();
+    ensureProjectRole(project as any, req.user!.id, "technician", projectNotFoundMessage);
+    return sendSuccess(res, {
+      buildings: project?.drawingMetaConfig?.buildings || [],
+      levels: project?.drawingMetaConfig?.levels || []
+    });
+  })
+);
+
+router.patch(
+  "/:id/drawing-config",
+  requireAuth,
+  validate(updateDrawingMetaConfigSchema),
+  asyncHandler(async (req, res) => {
+    const project = await ProjectModel.findById(req.params.id);
+    ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
+
+    project!.drawingMetaConfig = {
+      buildings: req.body.buildings,
+      levels: req.body.levels
+    };
+    await project!.save();
+    return sendSuccess(res, {
+      buildings: project!.drawingMetaConfig!.buildings,
+      levels: project!.drawingMetaConfig!.levels
+    });
   })
 );
 

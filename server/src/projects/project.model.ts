@@ -10,6 +10,16 @@ export type ProjectMember = {
   addedAt: Date;
 };
 
+export type DrawingMetaConfigItem = {
+  code: string;
+  name?: string;
+};
+
+export type ProjectDrawingMetaConfig = {
+  buildings: DrawingMetaConfigItem[];
+  levels: DrawingMetaConfigItem[];
+};
+
 export type ProjectDocument = {
   userId: Types.ObjectId;
   members: ProjectMember[];
@@ -17,6 +27,7 @@ export type ProjectDocument = {
   code: string;
   sortIndex: number;
   description?: string;
+  drawingMetaConfig?: ProjectDrawingMetaConfig;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -38,7 +49,11 @@ const projectSchema = new Schema<ProjectDocument>(
     name: { type: String, required: true, trim: true },
     code: { type: String, required: true, uppercase: true, trim: true },
     sortIndex: { type: Number, default: 0, index: true },
-    description: { type: String, trim: true }
+    description: { type: String, trim: true },
+    drawingMetaConfig: {
+      buildings: [{ code: { type: String, uppercase: true, trim: true }, name: { type: String, trim: true }, _id: false }],
+      levels: [{ code: { type: String, uppercase: true, trim: true }, name: { type: String, trim: true }, _id: false }]
+    }
   },
   { timestamps: true }
 );

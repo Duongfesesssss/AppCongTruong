@@ -301,7 +301,8 @@ router.post(
       drawingCode: drawingCodeInput,
       name,
       tagNames,
-      ocrText
+      ocrText,
+      parsedMetadata: parsedMetadataInput
     } = req.body as {
       projectId: string;
       buildingId?: string;
@@ -311,6 +312,15 @@ router.post(
       name?: string;
       tagNames?: string[];
       ocrText?: string;
+      parsedMetadata?: {
+        projectCode?: string;
+        buildingCode?: string;
+        levelCode?: string;
+        disciplineCode?: string;
+        drawingTypeCode?: string;
+        numberCode?: string;
+        freeText?: string;
+      };
     };
 
     const project = await ProjectModel.findById(projectId);
@@ -461,9 +471,8 @@ router.post(
       resolvedDisciplineId = discipline._id.toString();
     }
 
-    if (!resolvedFloorId || !resolvedDisciplineId) {
-      throw errors.validation("Khong map duoc Tang va Bo mon tu Ten ban ve. Vui long kiem tra format 7 truong.");
-    }
+    // Floor and discipline are optional in the new metadata-driven system
+    // Only throw if explicitly provided but invalid
 
     const normalizedDrawingCode = drawingCodeInput ? normalizeDrawingCode(drawingCodeInput) : "";
     let drawingCode = normalizedDrawingCode || parsed?.drawingCode || "";
@@ -535,17 +544,27 @@ router.post(
       drawingCode,
       versionIndex,
       isLatestVersion: true,
-      parsedMetadata: parsed
+      parsedMetadata: parsedMetadataInput
         ? {
-            projectCode: parsed.projectCode,
-            unitCode: parsed.unitCode,
-            disciplineCode: parsed.disciplineCode,
-            buildingCode: parsed.buildingCode,
-            buildingPartCode: parsed.buildingPartCode,
-            floorCode: parsed.floorCode,
-            fileTypeCode: parsed.fileTypeCode
+            projectCode: parsedMetadataInput.projectCode,
+            buildingCode: parsedMetadataInput.buildingCode,
+            levelCode: parsedMetadataInput.levelCode,
+            disciplineCode: parsedMetadataInput.disciplineCode,
+            drawingTypeCode: parsedMetadataInput.drawingTypeCode,
+            numberCode: parsedMetadataInput.numberCode,
+            freeText: parsedMetadataInput.freeText
           }
-        : undefined,
+        : parsed
+          ? {
+              projectCode: parsed.projectCode,
+              unitCode: parsed.unitCode,
+              disciplineCode: parsed.disciplineCode,
+              buildingCode: parsed.buildingCode,
+              buildingPartCode: parsed.buildingPartCode,
+              floorCode: parsed.floorCode,
+              fileTypeCode: parsed.fileTypeCode
+            }
+          : undefined,
       tagNames: mergedTags,
       sortIndex,
       originalName: standardizedFileName,

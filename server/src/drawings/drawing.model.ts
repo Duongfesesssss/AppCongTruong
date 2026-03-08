@@ -2,9 +2,14 @@ import mongoose, { Schema } from "mongoose";
 
 export type DrawingParsedMetadata = {
   projectCode?: string;
-  unitCode?: string;
-  disciplineCode?: string;
   buildingCode?: string;
+  levelCode?: string;
+  disciplineCode?: string;
+  drawingTypeCode?: string;
+  numberCode?: string;
+  freeText?: string;
+  // Legacy fields (backward compat)
+  unitCode?: string;
   buildingPartCode?: string;
   floorCode?: string;
   fileTypeCode?: string;
@@ -55,9 +60,14 @@ const drawingSchema = new Schema<DrawingDocument>(
     isLatestVersion: { type: Boolean, required: true, default: true, index: true },
     parsedMetadata: {
       projectCode: { type: String, uppercase: true, trim: true },
-      unitCode: { type: String, uppercase: true, trim: true },
-      disciplineCode: { type: String, uppercase: true, trim: true },
       buildingCode: { type: String, uppercase: true, trim: true },
+      levelCode: { type: String, uppercase: true, trim: true },
+      disciplineCode: { type: String, uppercase: true, trim: true },
+      drawingTypeCode: { type: String, uppercase: true, trim: true },
+      numberCode: { type: String, trim: true },
+      freeText: { type: String, trim: true },
+      // Legacy fields
+      unitCode: { type: String, uppercase: true, trim: true },
       buildingPartCode: { type: String, uppercase: true, trim: true },
       floorCode: { type: String, uppercase: true, trim: true },
       fileTypeCode: { type: String, uppercase: true, trim: true }

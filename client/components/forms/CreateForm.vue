@@ -77,122 +77,104 @@
         <div>
           <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">File PDF <span class="text-rose-400">*</span></label>
           <input type="file" class="input" accept="application/pdf" @change="handleFileChange" :required="drawingMode === '2d'" />
-          <p class="mt-1 text-[11px] text-slate-500">
-            Chỉ cần tải file PDF. Hệ thống sẽ auto-scan metadata theo quy tắc trong huongdanv1.md.
+        </div>
+
+        <!-- Generated name preview -->
+        <div
+          v-if="generatedDrawingName || uploadFile"
+          class="rounded-lg border px-3 py-2"
+          :class="generatedDrawingName ? 'border-brand-200 bg-brand-50' : 'border-slate-200 bg-slate-50'"
+        >
+          <p class="text-[11px] font-semibold uppercase tracking-wide" :class="generatedDrawingName ? 'text-brand-700' : 'text-slate-500'">
+            Tên bản vẽ tự sinh
+          </p>
+          <p v-if="generatedDrawingName" class="mt-0.5 break-all font-mono text-sm font-semibold text-brand-900">
+            {{ generatedDrawingName }}
+          </p>
+          <p v-else class="mt-0.5 text-xs text-slate-400">
+            Chọn ít nhất một trường bên dưới để sinh tên tự động.
           </p>
         </div>
 
-        <div
-          v-if="drawingAutoScanStatus !== 'idle' || uploadFile"
-          class="rounded-lg border p-3"
-          :class="requiresDrawingIntervention ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'"
-        >
-          <p class="text-xs font-semibold text-slate-700">Review &amp; Categorize</p>
-          <p class="mt-1 text-[11px]" :class="requiresDrawingIntervention ? 'text-rose-700' : 'text-slate-500'">
-            {{
-              requiresDrawingIntervention
-                ? drawingReviewMessage
-                : "Metadata đã được auto-fill. Bạn có thể lưu ngay hoặc chỉnh lại."
-            }}
-          </p>
-
-          <div v-if="drawingAutoScanStatus === 'scanning'" class="mt-2 text-xs text-brand-600">
-            Đang auto-scan metadata...
-          </div>
-
-          <div class="mt-3 grid gap-3 sm:grid-cols-2">
-            <div class="sm:col-span-2">
-              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tên bản vẽ <span class="text-rose-400">*</span></label>
-              <input
-                v-model="drawingDraftName"
-                type="text"
-                class="input"
-                placeholder="VD: 2201.CYSAPA-A79-AA-KS-BS-L1-M2"
-                @input="handleDrawingDraftNameInput"
-              />
-            </div>
-          </div>
-
-          <div v-if="requiresManualCoreTags" class="mt-3 rounded-lg border border-rose-200 bg-white p-3">
-            <p class="text-xs font-semibold uppercase tracking-wide text-rose-700">
-              OCR không đọc được tên chuẩn, cần chọn theo cấu trúc 7 trường cốt lõi
-            </p>
-            <p class="mt-1 text-[11px] text-slate-600">
-              Chọn từng trường theo format `[Project]-[Originator]-[Discipline]-[Building]-[Volume]-[Level]-[Type]`.
-            </p>
-
-            <div class="mt-3 grid gap-3 sm:grid-cols-2">
-              <div v-for="field in drawingCoreTagFields" :key="field">
-                <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
-                  {{ drawingCoreTagLabels[field] }}
-                  <span v-if="drawingRequiredManualFields.includes(field)" class="text-rose-400">*</span>
-                </label>
-                <select
-                  v-model="drawingManualTagSelections[field]"
-                  class="input"
-                  @change="handleDrawingCoreTagChange"
-                >
-                  <option value="">
-                    {{ drawingRequiredManualFields.includes(field) ? "Chọn mã bắt buộc" : "Tùy chọn" }}
-                  </option>
-                  <option
-                    v-for="option in getDrawingTagOptions(field)"
-                    :key="`${field}-${option.value}`"
-                    :value="option.value"
-                  >
-                    {{ option.label }}
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            <div class="mt-3 grid gap-3 sm:grid-cols-3">
-              <div v-for="field in drawingSupplementaryTagFields" :key="field">
-                <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
-                  {{ drawingSupplementaryTagLabels[field] }}
-                </label>
-                <select
-                  v-model="drawingSupplementaryTagSelections[field]"
-                  class="input"
-                  @change="handleDrawingSupplementaryTagChange"
-                >
-                  <option value="">Tùy chọn</option>
-                  <option
-                    v-for="option in getDrawingSupplementaryTagOptions(field)"
-                    :key="`${field}-${option.value}`"
-                    :value="option.value"
-                  >
-                    {{ option.label }}
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            <div class="mt-3">
-              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
-                Tag bổ sung (tùy chọn)
-              </label>
-              <input
-                v-model="drawingManualTagInput"
-                type="text"
-                class="input"
-                placeholder="vd: revision:v-a, source:manual"
-                list="cms-tag-suggestions"
-              />
-            </div>
-
-            <p v-if="!hasAnyDrawingTagOptions" class="mt-2 text-[11px] text-rose-700">
-              Chưa đủ gợi ý mã chuyên ngành từ file. Bạn vẫn có thể nhập tag bổ sung theo dạng field:value.
-            </p>
-
-            <p v-if="manualDrawingName" class="mt-2 text-[11px] text-slate-600">
-              Tên bản vẽ ghép tự động: <span class="font-semibold text-slate-700">{{ manualDrawingName }}</span>
+        <!-- Metadata fields: 4 dropdowns + 2 free text -->
+        <div v-if="uploadFile" class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tòa nhà</label>
+            <select v-model="drawingMetaForm.buildingCode" class="input">
+              <option value="">Không chọn</option>
+              <option
+                v-for="b in projectBuildingOptions"
+                :key="b.code"
+                :value="b.code"
+              >
+                {{ b.code }}{{ b.name ? ` – ${b.name}` : "" }}
+              </option>
+            </select>
+            <p v-if="!projectBuildingOptions.length" class="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
+              Chưa khai báo tòa nhà.
+              <button type="button" class="font-medium text-brand-500 hover:text-brand-700 hover:underline" @click="showDrawingConfigInForm = true">Khai báo ngay →</button>
             </p>
           </div>
 
-          <p v-if="drawingValidationMessage" class="mt-2 text-xs text-rose-600">
-            {{ drawingValidationMessage }}
-          </p>
+          <div>
+            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tầng</label>
+            <select v-model="drawingMetaForm.levelCode" class="input">
+              <option value="">Không chọn</option>
+              <option
+                v-for="l in projectLevelOptions"
+                :key="l.code"
+                :value="l.code"
+              >
+                {{ l.code }}{{ l.name ? ` – ${l.name}` : "" }}
+              </option>
+            </select>
+            <p v-if="!projectLevelOptions.length" class="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
+              Chưa khai báo tầng.
+              <button type="button" class="font-medium text-brand-500 hover:text-brand-700 hover:underline" @click="showDrawingConfigInForm = true">Khai báo ngay →</button>
+            </p>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Bộ môn</label>
+            <select v-model="drawingMetaForm.disciplineCode" class="input">
+              <option value="">Không chọn</option>
+              <option v-for="d in DISCIPLINE_OPTIONS" :key="d.code" :value="d.code">
+                {{ d.code }} – {{ d.label }}
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Loại bản vẽ</label>
+            <select v-model="drawingMetaForm.drawingTypeCode" class="input">
+              <option value="">Không chọn</option>
+              <option v-for="t in DRAWING_TYPE_OPTIONS" :key="t.code" :value="t.code">
+                {{ t.code }} – {{ t.label }}
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Số bản vẽ</label>
+            <input
+              v-model="drawingMetaForm.numberCode"
+              type="text"
+              class="input"
+              placeholder="VD: 0045, 001"
+              maxlength="20"
+            />
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Mô tả tự do</label>
+            <input
+              v-model="drawingMetaForm.freeText"
+              type="text"
+              class="input"
+              placeholder="VD: Verteiler, Grundriss-Nord"
+              maxlength="60"
+            />
+          </div>
         </div>
         </template><!-- end 2D -->
       </template>
@@ -262,6 +244,15 @@
       </div>
     </form>
   </FormModal>
+
+  <!-- Drawing config shortcut for admins uploading drawings -->
+  <ProjectDrawingConfig
+    v-if="type === 'drawing' && parentId"
+    :show="showDrawingConfigInForm"
+    :project-id="parentId"
+    @close="showDrawingConfigInForm = false"
+    @updated="handleDrawingConfigSaved"
+  />
 </template>
 
 <script setup lang="ts">
@@ -269,6 +260,7 @@ import { isOfflineQueuedResponse, useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import { useProjectTree } from "~/composables/api/useProjectTree";
 import { autoScanDrawingFile, type DrawingAutoScanResult } from "~/utils/drawing-auto-scan";
+import { DISCIPLINE_OPTIONS, DRAWING_TYPE_OPTIONS } from "~/constants/drawing-meta";
 
 export type CreateFormType = "project" | "building" | "floor" | "discipline" | "drawing" | "task";
 
@@ -301,6 +293,33 @@ const drawingAutoScanText = ref<string>("");
 const drawingParsed = ref<NonNullable<DrawingAutoScanResult["parsed"]> | null>(null);
 const drawingDraftName = ref("");
 const cmsTagSuggestions = ref<string[]>([]);
+
+// Metadata-driven drawing naming system
+type DrawingMetaConfigItem = { code: string; name?: string };
+const projectDrawingConfig = ref<{ buildings: DrawingMetaConfigItem[]; levels: DrawingMetaConfigItem[] }>({ buildings: [], levels: [] });
+const drawingMetaForm = reactive({
+  buildingCode: "",
+  levelCode: "",
+  disciplineCode: "",
+  drawingTypeCode: "",
+  numberCode: "",
+  freeText: ""
+});
+const projectBuildingOptions = computed(() => projectDrawingConfig.value.buildings);
+const projectLevelOptions = computed(() => projectDrawingConfig.value.levels);
+const showDrawingConfigInForm = ref(false);
+const generatedDrawingName = computed(() => {
+  const parts = [
+    selectedProjectCode.value,
+    drawingMetaForm.buildingCode,
+    drawingMetaForm.levelCode,
+    drawingMetaForm.disciplineCode,
+    drawingMetaForm.drawingTypeCode,
+    drawingMetaForm.numberCode,
+    drawingMetaForm.freeText
+  ].map((p) => (p || "").trim().toUpperCase()).filter(Boolean);
+  return parts.join("-");
+});
 
 type CmsTagNameSuggestionItem = {
   scope:
@@ -926,7 +945,7 @@ const requiresDrawingIntervention = computed(() => {
 const canSubmitDrawing = computed(() => {
   if (props.type !== "drawing") return true;
   if (drawingMode.value === "3d") return !!ifcFile.value && !!ifcName.value.trim();
-  return !!uploadFile.value && !drawingValidationMessage.value;
+  return !!uploadFile.value && !!generatedDrawingName.value;
 });
 
 const saveTaskDraft = () => {
@@ -1043,6 +1062,20 @@ const fetchDrawingProjectCode = async () => {
   }
 };
 
+const fetchDrawingConfig = async () => {
+  if (!props.parentId) return;
+  try {
+    const data = await api.get<{ buildings: DrawingMetaConfigItem[]; levels: DrawingMetaConfigItem[] }>(`/projects/${props.parentId}/drawing-config`);
+    projectDrawingConfig.value = data ?? { buildings: [], levels: [] };
+  } catch {
+    projectDrawingConfig.value = { buildings: [], levels: [] };
+  }
+};
+
+const handleDrawingConfigSaved = async () => {
+  await fetchDrawingConfig();
+};
+
 const form = reactive({
   name: "",
   description: "",
@@ -1065,69 +1098,10 @@ const title = computed(() => {
   return titles[props.type];
 });
 
-const handleFileChange = async (e: Event) => {
+const handleFileChange = (e: Event) => {
   const input = e.target as HTMLInputElement;
   if (!input.files || !input.files[0]) return;
-
-  const requestId = drawingAutoScanRequestId.value + 1;
-  drawingAutoScanRequestId.value = requestId;
-  const selectedFile = input.files[0];
-  const extractedTokens = extractFilenameTokens(selectedFile.name);
-  uploadFile.value = selectedFile;
-  drawingAutoScanStatus.value = "scanning";
-  drawingAutoScanSource.value = "none";
-  drawingAutoScanText.value = "";
-  drawingParsed.value = null;
-  drawingDraftName.value = "";
-  drawingDraftProjectToken.value = "";
-  drawingDraftNameLockedByUser.value = false;
-  drawingManualTagsLockedByUser.value = false;
-  resetDrawingManualTags();
-  applyDrawingManualTagsFromTokens(extractedTokens);
-
-  try {
-    const result = await autoScanDrawingFile(selectedFile);
-    if (requestId !== drawingAutoScanRequestId.value) {
-      return;
-    }
-    drawingAutoScanSource.value = result.source;
-    drawingAutoScanText.value = result.ocrText || "";
-    drawingParsed.value = result.parsed || null;
-    const ocrTokens = extractOcrTokens(drawingAutoScanText.value);
-    drawingFilenameTokens.value = toUniqueTokens([...drawingFilenameTokens.value, ...ocrTokens], false);
-    if (!drawingManualTagsLockedByUser.value) {
-      fillMissingDrawingManualTagsFromTokens(drawingFilenameTokens.value);
-    }
-
-    if (result.parsed) {
-      if (!drawingDraftNameLockedByUser.value) {
-        drawingDraftName.value = result.parsed.suggestedName || result.parsed.drawingCode || "";
-        drawingDraftProjectToken.value = drawingDraftName.value.split("-")[0] || "";
-      }
-      if (!drawingManualTagsLockedByUser.value) {
-        applyDrawingManualTagsFromParsed(result.parsed);
-      }
-    } else if (!drawingDraftName.value && extractedTokens.length > 0 && !drawingDraftNameLockedByUser.value) {
-      drawingDraftName.value = extractedTokens.slice(0, 7).join("-");
-      drawingDraftProjectToken.value = drawingDraftName.value.split("-")[0] || "";
-    }
-
-    drawingAutoScanStatus.value = result.matched ? "matched" : "unmatched";
-
-    if (result.matched) {
-      toast.push("Auto-scan đã nhận diện metadata bản vẽ", "success");
-    } else if (result.error) {
-      toast.push("Auto-scan không lấy được metadata: " + result.error, "info");
-    } else {
-      toast.push("Không đọc được metadata từ file. Vui lòng chọn các trường lõi để ghép Tên bản vẽ.", "info");
-    }
-  } catch {
-    if (requestId !== drawingAutoScanRequestId.value) {
-      return;
-    }
-    drawingAutoScanStatus.value = "error";
-    toast.push("Auto-scan thất bại. Vui lòng chọn các trường lõi để nhập Tên bản vẽ thủ công.", "error");
-  }
+  uploadFile.value = input.files[0];
 };
 
 const handleIfcFileChange = (e: Event) => {
@@ -1165,6 +1139,14 @@ const resetForm = () => {
   drawingDraftNameLockedByUser.value = false;
   drawingManualTagsLockedByUser.value = false;
   resetDrawingManualTags();
+
+  drawingMetaForm.buildingCode = "";
+  drawingMetaForm.levelCode = "";
+  drawingMetaForm.disciplineCode = "";
+  drawingMetaForm.drawingTypeCode = "";
+  drawingMetaForm.numberCode = "";
+  drawingMetaForm.freeText = "";
+  showDrawingConfigInForm.value = false;
 
   errorMsg.value = "";
 };
@@ -1237,24 +1219,25 @@ const handleSubmit = async () => {
           errorMsg.value = "Vui lòng chọn file PDF";
           return;
         }
-        if (drawingValidationMessage.value) {
-          errorMsg.value = drawingValidationMessage.value;
+        if (!generatedDrawingName.value) {
+          errorMsg.value = "Chưa có tên bản vẽ. Vui lòng chọn ít nhất một trường metadata.";
           return;
         }
 
-        const resolvedDrawingName = drawingDraftName.value.trim() || manualDrawingName.value;
-        const normalizedDrawingName = resolvedDrawingName.trim().toUpperCase();
-
         const formData = new FormData();
         formData.append("projectId", props.parentId);
-        formData.append("drawingCode", normalizedDrawingName);
-        formData.append("name", normalizedDrawingName);
-        if (drawingAutoScanText.value) {
-          formData.append("ocrText", drawingAutoScanText.value);
-        }
-        const manualTagNames = buildManualDrawingTagNames();
-        if (manualTagNames.length > 0) {
-          formData.append("tagNames", JSON.stringify(manualTagNames));
+        formData.append("drawingCode", generatedDrawingName.value);
+        formData.append("name", generatedDrawingName.value);
+        const parsedMeta: Record<string, string> = {};
+        if (selectedProjectCode.value) parsedMeta.projectCode = selectedProjectCode.value;
+        if (drawingMetaForm.buildingCode) parsedMeta.buildingCode = drawingMetaForm.buildingCode;
+        if (drawingMetaForm.levelCode) parsedMeta.levelCode = drawingMetaForm.levelCode;
+        if (drawingMetaForm.disciplineCode) parsedMeta.disciplineCode = drawingMetaForm.disciplineCode;
+        if (drawingMetaForm.drawingTypeCode) parsedMeta.drawingTypeCode = drawingMetaForm.drawingTypeCode;
+        if (drawingMetaForm.numberCode) parsedMeta.numberCode = drawingMetaForm.numberCode;
+        if (drawingMetaForm.freeText) parsedMeta.freeText = drawingMetaForm.freeText;
+        if (Object.keys(parsedMeta).length > 0) {
+          formData.append("parsedMetadata", JSON.stringify(parsedMeta));
         }
         formData.append("file", uploadFile.value);
         result = await api.upload("/drawings", formData);
@@ -1313,7 +1296,7 @@ watch(() => props.show, async (newVal) => {
       await fetchCmsTagSuggestions();
     }
     if (props.type === "drawing") {
-      await fetchDrawingProjectCode();
+      await Promise.all([fetchDrawingProjectCode(), fetchDrawingConfig()]);
     }
     if (props.type === "task") {
       form.pinX = props.initialPinX ?? 0.5;

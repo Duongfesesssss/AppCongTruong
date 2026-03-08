@@ -20,7 +20,10 @@
       "Bash(ls d:/appcongtruong/client/node_modules/three/*.d.ts)",
       "Bash(node -e \":*)",
       "Bash(timeout 10 node -e \":*)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(pdftotext \"d:\\\\appcongtruong\\\\huongdanbanve\\\\22_008 Planliste_ELT_b_2UA.pdf\" -)",
+      "Bash(pdftotext \"d:\\\\appcongtruong\\\\huongdanbanve\\\\22_008 Planliste_TGA_a_2.ÜA.pdf\" -)",
+      "Bash(pdftotext \"d:\\\\appcongtruong\\\\huongdanbanve\\\\4_1_2_Planliste_FuV_2_ÜA.pdf\" -)"
     ]
   }
 }

@@ -21,18 +21,45 @@ const parseTagNamesInput = (value: unknown) => {
   return [];
 };
 
+const parseParsedMetadataInput = (value: unknown): Record<string, string> | undefined => {
+  if (!value) return undefined;
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, string>;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, string>;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
+const parsedMetadataSchema = z.object({
+  projectCode: z.string().max(40).optional(),
+  buildingCode: z.string().max(40).optional(),
+  levelCode: z.string().max(40).optional(),
+  disciplineCode: z.string().max(40).optional(),
+  drawingTypeCode: z.string().max(40).optional(),
+  numberCode: z.string().max(40).optional(),
+  freeText: z.string().max(100).optional()
+}).optional();
+
 export const createDrawingSchema = z.object({
   body: z.object({
     projectId: objectIdSchema,
     buildingId: objectIdSchema.optional(),
     floorId: objectIdSchema.optional(),
     disciplineId: objectIdSchema.optional(),
-    drawingCode: z.string().min(3).max(120).optional(),
+    drawingCode: z.string().min(1).max(120).optional(),
     name: z.string().min(1).optional(),
     tagNames: z.preprocess(parseTagNamesInput, z.array(z.string().min(1).max(80)).max(30).optional()),
     ocrText: z.string().max(20000).optional(),
     fileType: z.enum(["2d", "3d", "hybrid"]).optional(),
-    linkedDrawingId: objectIdSchema.optional()
+    linkedDrawingId: objectIdSchema.optional(),
+    parsedMetadata: z.preprocess(parseParsedMetadataInput, parsedMetadataSchema)
   })
 });
 

@@ -44,3 +44,16 @@ export const removeProjectMemberSchema = z.object({
     memberUserId: objectIdSchema
   })
 });
+
+const drawingMetaItemSchema = z.object({
+  code: z.string().min(1).max(20).transform((v) => v.trim().toUpperCase()),
+  name: z.string().max(60).optional()
+});
+
+export const updateDrawingMetaConfigSchema = z.object({
+  params: z.object({ id: objectIdSchema }),
+  body: z.object({
+    buildings: z.array(drawingMetaItemSchema).max(50).default([]),
+    levels: z.array(drawingMetaItemSchema).max(50).default([])
+  })
+});
