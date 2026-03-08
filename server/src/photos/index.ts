@@ -164,7 +164,8 @@ const loadTaskWithAccess = async (taskId: string, userId: string) => {
 const createPhotoFromFile = async (
   task: Awaited<ReturnType<typeof loadTaskWithAccess>>,
   file: Express.Multer.File,
-  metadata: PhotoMetadataPayload
+  metadata: PhotoMetadataPayload,
+  userId: string
 ) => {
   const dimensions = readImageDimensions(file);
   const storageKey = await handleFileUpload(file, "photos");
@@ -182,7 +183,8 @@ const createPhotoFromFile = async (
     location: trimOptional(metadata.location),
     category: trimOptional(metadata.category),
     measuredBy: trimOptional(metadata.measuredBy),
-    measuredAt: new Date()
+    measuredAt: new Date(),
+    createdBy: userId
   });
 };
 
@@ -213,7 +215,7 @@ router.post(
       location,
       category,
       measuredBy
-    });
+    }, req.user!.id);
 
     return sendSuccess(res, photo, {}, 201);
   })
@@ -279,7 +281,7 @@ router.post(
               location,
               category,
               measuredBy
-            });
+            }, req.user!.id);
             job.createdPhotoIds.push(photo._id.toString());
             job.successCount += 1;
           } catch (err) {

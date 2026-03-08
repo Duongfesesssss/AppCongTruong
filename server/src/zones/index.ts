@@ -48,7 +48,8 @@ router.post(
       shape,
       style,
       status: status ?? "open",
-      notes: sanitizeNotes(notes) ?? []
+      notes: sanitizeNotes(notes) ?? [],
+      createdBy: req.user!.id
     });
 
     return sendSuccess(res, zone, {}, 201);

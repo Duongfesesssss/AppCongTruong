@@ -263,7 +263,8 @@ router.post(
       gewerk: sanitizeOptional(body.gewerk),
       tagNames,
       notes: sanitizeNotes(body.notes) ?? [],
-      pinCode
+      pinCode,
+      createdBy: req.user!.id
     });
 
     return sendSuccess(res, task, {}, 201);

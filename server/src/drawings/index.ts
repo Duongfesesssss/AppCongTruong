@@ -551,7 +551,8 @@ router.post(
       originalName: standardizedFileName,
       storageKey,
       mimeType: req.file.mimetype,
-      size: req.file.size
+      size: req.file.size,
+      createdBy: req.user!.id
     });
 
     return sendSuccess(
@@ -984,7 +985,8 @@ router.post(
         elementCount: validationResult.elementCount,
         validated: true,
         validatedAt: new Date()
-      }
+      },
+      createdBy: req.user!.id
     });
 
     // If linked, update the linked drawing
