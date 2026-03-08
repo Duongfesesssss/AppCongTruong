@@ -21,6 +21,7 @@ export type PhotoDocument = {
   measuredAt?: Date;            // Thời điểm đo (lấy từ line mới nhất hoặc khi upload)
   measurementCount?: number;    // Số đường đo (tự động count từ annotations)
 
+  createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -45,7 +46,9 @@ const photoSchema = new Schema<PhotoDocument>(
     // Measurement metadata
     measuredBy: { type: String },
     measuredAt: { type: Date },
-    measurementCount: { type: Number, default: 0 }
+    measurementCount: { type: Number, default: 0 },
+
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true }
   },
   { timestamps: true }
 );

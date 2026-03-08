@@ -9,6 +9,7 @@ export type ZoneDocument = {
   style?: Record<string, unknown>;
   notes: string[];
   shape: Record<string, unknown>;
+  createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -20,7 +21,8 @@ const zoneSchema = new Schema<ZoneDocument>(
     status: { type: String, required: true, enum: ["open", "in_progress", "done"], default: "open" },
     style: { type: Schema.Types.Mixed },
     notes: { type: [String], default: [] },
-    shape: { type: Schema.Types.Mixed, required: true }
+    shape: { type: Schema.Types.Mixed, required: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true }
   },
   { timestamps: true }
 );

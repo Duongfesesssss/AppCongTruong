@@ -19,6 +19,7 @@ export type TaskDocument = {
   tagNames: string[];
   notes: string[];
   pinCode: string;
+  createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -53,7 +54,8 @@ const taskSchema = new Schema<TaskDocument>(
       }
     },
     notes: { type: [String], default: [] },
-    pinCode: { type: String, required: true, unique: true }
+    pinCode: { type: String, required: true, unique: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true }
   },
   { timestamps: true }
 );
