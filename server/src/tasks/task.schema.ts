@@ -73,6 +73,7 @@ export const listTaskSchema = z.object({
     drawingId: objectIdSchema.optional(),
     status: z.enum(taskStatuses).optional(),
     category: z.enum(taskCategories).optional(),
+    createdBy: objectIdSchema.optional(),
     tagName: tagNameSchema.optional(),
     tagNames: z.preprocess(parseTagNamesInput, z.array(tagNameSchema).max(30).optional())
   })
