@@ -331,7 +331,7 @@ const loading = ref(false);
 const error = ref('');
 const allPins = ref<any[]>([]);
 const userProjects = ref<any[]>([]);
-const allUsers = ref<any[]>([]);
+const usersMap = ref<Map<string, any>>(new Map());
 
 // Filters
 const filters = ref({
@@ -401,7 +401,7 @@ const uniqueCreators = computed(() => {
   const creatorMap = new Map();
   allPins.value.forEach(pin => {
     if (pin.createdBy && !creatorMap.has(String(pin.createdBy))) {
-      const creator = allUsers.value.find(u => String(u._id) === String(pin.createdBy));
+      const creator = usersMap.value.get(String(pin.createdBy));
       if (creator) {
         creatorMap.set(String(pin.createdBy), {
           id: String(pin.createdBy),
@@ -422,13 +422,26 @@ const loadData = async () => {
     const projectsResponse = await api.get<any>('/projects');
     userProjects.value = projectsResponse.projects || [];
 
+    // Build users map from project members
+    const newUsersMap = new Map();
+    userProjects.value.forEach((project: any) => {
+      if (project.members && Array.isArray(project.members)) {
+        project.members.forEach((member: any) => {
+          if (member.userId && !newUsersMap.has(String(member.userId))) {
+            newUsersMap.set(String(member.userId), {
+              _id: member.userId,
+              name: member.userName || member.userEmail || 'Unknown',
+              email: member.userEmail
+            });
+          }
+        });
+      }
+    });
+    usersMap.value = newUsersMap;
+
     // Load all pins from all projects
     const pinsResponse = await api.get<any[]>('/tasks');
     allPins.value = pinsResponse || [];
-
-    // Load all users for creator names
-    const usersResponse = await api.get<any[]>('/users');
-    allUsers.value = usersResponse || [];
   } catch (err: any) {
     error.value = err.message || 'Lỗi khi tải dữ liệu';
     toast.push(error.value, 'error');
@@ -454,7 +467,7 @@ const getProjectName = (projectId: string) => {
 };
 
 const getCreatorName = (userId: string) => {
-  const user = allUsers.value.find(u => String(u._id) === String(userId));
+  const user = usersMap.value.get(String(userId));
   return user?.name || user?.email || '-';
 };
 
