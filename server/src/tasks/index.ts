@@ -9,7 +9,7 @@ import { CounterModel } from "./counter.model";
 import { createOrUpdateTaskSchema, listTaskSchema, taskIdSchema } from "./task.schema";
 import { DrawingModel } from "../drawings/drawing.model";
 import { ProjectModel } from "../projects/project.model";
-import { buildProjectAccessFilter, ensureProjectRole } from "../projects/project-access";
+import { buildProjectAccessFilter, ensureProjectRole, canDeleteResource } from "../projects/project-access";
 import { PhotoModel } from "../photos/photo.model";
 import { ZoneModel } from "../zones/zone.model";
 import { formatPinCode, sanitizeText, toCode } from "../lib/utils";
@@ -263,7 +263,8 @@ router.post(
       gewerk: sanitizeOptional(body.gewerk),
       tagNames,
       notes: sanitizeNotes(body.notes) ?? [],
-      pinCode
+      pinCode,
+      createdBy: req.user!.id
     });
 
     return sendSuccess(res, task, {}, 201);
@@ -429,13 +430,9 @@ router.delete(
     const task = await TaskModel.findById(req.params.id);
     if (!task) throw errors.notFound("Task không tồn tại");
 
-    // Check ownership
-    ensureProjectRole(
-      await ProjectModel.findById(task.projectId),
-      req.user!.id,
-      "admin",
-      "Task không tồn tại hoặc không có quyền"
-    );
+    // Check delete permission: chỉ admin hoặc người tạo mới được xóa
+    const project = await ProjectModel.findById(task.projectId);
+    canDeleteResource(project, req.user!.id, task.createdBy, "Task không tồn tại hoặc không có quyền");
 
     // Delete associated photos and zones
     await Promise.all([

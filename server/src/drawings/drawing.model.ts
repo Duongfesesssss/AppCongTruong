@@ -38,6 +38,7 @@ export type DrawingDocument = {
     validated?: boolean;
     validatedAt?: Date;
   };
+  createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -91,7 +92,8 @@ const drawingSchema = new Schema<DrawingDocument>(
       elementCount: { type: Number },
       validated: { type: Boolean },
       validatedAt: { type: Date }
-    }
+    },
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true }
   },
   { timestamps: true }
 );

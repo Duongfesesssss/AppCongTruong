@@ -16,7 +16,7 @@ import { uploadLimiter } from "../middlewares/rate-limit";
 import { deleteFromS3, getS3Stream } from "../lib/s3";
 import { TaskModel } from "../tasks/task.model";
 import { ProjectModel } from "../projects/project.model";
-import { ensureProjectRole } from "../projects/project-access";
+import { ensureProjectRole, canDeleteResource } from "../projects/project-access";
 import { PhotoModel } from "./photo.model";
 import {
   bulkPhotoJobIdSchema,
@@ -164,7 +164,8 @@ const loadTaskWithAccess = async (taskId: string, userId: string) => {
 const createPhotoFromFile = async (
   task: Awaited<ReturnType<typeof loadTaskWithAccess>>,
   file: Express.Multer.File,
-  metadata: PhotoMetadataPayload
+  metadata: PhotoMetadataPayload,
+  userId: string
 ) => {
   const dimensions = readImageDimensions(file);
   const storageKey = await handleFileUpload(file, "photos");
@@ -182,7 +183,8 @@ const createPhotoFromFile = async (
     location: trimOptional(metadata.location),
     category: trimOptional(metadata.category),
     measuredBy: trimOptional(metadata.measuredBy),
-    measuredAt: new Date()
+    measuredAt: new Date(),
+    createdBy: userId
   });
 };
 
@@ -213,7 +215,7 @@ router.post(
       location,
       category,
       measuredBy
-    });
+    }, req.user!.id);
 
     return sendSuccess(res, photo, {}, 201);
   })
@@ -279,7 +281,7 @@ router.post(
               location,
               category,
               measuredBy
-            });
+            }, req.user!.id);
             job.createdPhotoIds.push(photo._id.toString());
             job.successCount += 1;
           } catch (err) {
@@ -435,12 +437,9 @@ router.delete(
     const task = await TaskModel.findById(photo.taskId);
     if (!task) throw errors.notFound("Photo khong ton tai");
 
-    ensureProjectRole(
-      await ProjectModel.findById(task.projectId),
-      req.user!.id,
-      "admin",
-      "Photo khong ton tai hoac khong co quyen"
-    );
+    // Check delete permission: chỉ admin hoặc người tạo mới được xóa
+    const project = await ProjectModel.findById(task.projectId);
+    canDeleteResource(project, req.user!.id, photo.createdBy, "Photo khong ton tai hoac khong co quyen");
 
     // Delete file from storage
     if (config.storageType === "s3") {

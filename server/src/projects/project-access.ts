@@ -57,3 +57,37 @@ export const ensureProjectRole = (
   }
   return role;
 };
+
+/**
+ * Kiểm tra quyền xóa resource.
+ * Chỉ người tạo (createdBy) hoặc admin mới được xóa.
+ *
+ * @param project - Project document
+ * @param userId - ID của user hiện tại
+ * @param resourceCreatorId - ID của người tạo resource (createdBy)
+ * @param notFoundMessage - Thông báo lỗi khi không tìm thấy
+ * @returns true nếu có quyền xóa
+ * @throws 404 nếu không có quyền truy cập project
+ * @throws 403 nếu không có quyền xóa
+ */
+export const canDeleteResource = (
+  project: ProjectLike | null,
+  userId: string,
+  resourceCreatorId: unknown,
+  notFoundMessage = "Khong co quyen truy cap resource"
+): boolean => {
+  if (!project) throw errors.notFound(notFoundMessage);
+
+  const role = getProjectRole(project, userId);
+  if (!role) throw errors.notFound(notFoundMessage);
+
+  // Admin có quyền xóa mọi resource
+  if (role === "admin") return true;
+
+  // Người tạo có quyền xóa resource của mình
+  const creatorIdString = toIdString(resourceCreatorId);
+  if (creatorIdString && creatorIdString === userId) return true;
+
+  // Nếu không phải admin và không phải người tạo thì không có quyền xóa
+  throw errors.forbidden("Chi nguoi tao hoac admin moi co quyen xoa");
+};

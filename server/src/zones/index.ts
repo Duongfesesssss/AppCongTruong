@@ -6,7 +6,7 @@ import { requireAuth } from "../middlewares/require-auth";
 import { errors } from "../lib/errors";
 import { TaskModel } from "../tasks/task.model";
 import { ProjectModel } from "../projects/project.model";
-import { ensureProjectRole } from "../projects/project-access";
+import { ensureProjectRole, canDeleteResource } from "../projects/project-access";
 import { ZoneModel } from "./zone.model";
 import { createZoneSchema, updateZoneSchema, zoneIdSchema } from "./zone.schema";
 import { sanitizeText } from "../lib/utils";
@@ -48,7 +48,8 @@ router.post(
       shape,
       style,
       status: status ?? "open",
-      notes: sanitizeNotes(notes) ?? []
+      notes: sanitizeNotes(notes) ?? [],
+      createdBy: req.user!.id
     });
 
     return sendSuccess(res, zone, {}, 201);
@@ -105,12 +106,9 @@ router.delete(
     const task = await TaskModel.findById(zone.taskId);
     if (!task) throw errors.notFound("Zone không tồn tại");
 
-    ensureProjectRole(
-      await ProjectModel.findById(task.projectId),
-      req.user!.id,
-      "admin",
-      "Zone không tồn tại hoặc không có quyền"
-    );
+    // Check delete permission: chỉ admin hoặc người tạo mới được xóa
+    const project = await ProjectModel.findById(task.projectId);
+    canDeleteResource(project, req.user!.id, zone.createdBy, "Zone không tồn tại hoặc không có quyền");
 
     await zone.deleteOne();
     return sendSuccess(res, { ok: true });
