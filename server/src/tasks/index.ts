@@ -6,7 +6,7 @@ import { requireAuth } from "../middlewares/require-auth";
 import { errors } from "../lib/errors";
 import { TaskModel } from "./task.model";
 import { CounterModel } from "./counter.model";
-import { createOrUpdateTaskSchema, listTaskSchema, taskIdSchema, moveTaskSchema, cloneTaskSchema } from "./task.schema";
+import { createOrUpdateTaskSchema, listTaskSchema, taskIdSchema, moveTaskSchema, cloneTaskSchema, bulkCloneTaskSchema } from "./task.schema";
 import { DrawingModel } from "../drawings/drawing.model";
 import { ProjectModel } from "../projects/project.model";
 import { buildProjectAccessFilter, ensureProjectRole, canDeleteResource } from "../projects/project-access";
@@ -515,6 +515,73 @@ router.post(
     });
 
     return sendSuccess(res, clonedTask, {}, 201);
+  })
+);
+
+// POST /api/tasks/:id/bulk-clone - Nhân bản hàng loạt task (không copy ảnh)
+router.post(
+  "/:id/bulk-clone",
+  requireAuth,
+  validate(bulkCloneTaskSchema),
+  asyncHandler(async (req, res) => {
+    const sourceTask = await TaskModel.findById(req.params.id);
+    if (!sourceTask) throw errors.notFound("Task không tồn tại");
+
+    // Check permission: admin role required to clone
+    const project = await ProjectModel.findById(sourceTask.projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Task không tồn tại hoặc không có quyền");
+
+    const { count, pinX, pinY } = req.body;
+
+    // Get drawing info for pin code generation
+    const drawing = await DrawingModel.findById(sourceTask.drawingId);
+    if (!drawing) throw errors.notFound("Drawing không tồn tại");
+
+    // Prepare gewerkCode, buildingCode, floorCode for all clones
+    const gewerkCode = toCode(sourceTask.gewerk ?? "NA", 2);
+    const buildingCode = toCode(drawing.parsedMetadata?.buildingCode || "NA", 2);
+    const floorCode = toCode(drawing.parsedMetadata?.floorCode || "NA", 2);
+
+    // Generate multiple clones
+    const clonedTasks = [];
+    for (let i = 0; i < count; i++) {
+      // Increment counter for each clone
+      const counter = await CounterModel.findOneAndUpdate(
+        { _id: project!._id.toString() },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
+
+      const pinCode = formatPinCode(project!.code, buildingCode, floorCode, gewerkCode, counter.seq);
+
+      // Clone task fields: pinName, category, status, notes (NOT photos)
+      const clonedTask = await TaskModel.create({
+        projectId: sourceTask.projectId,
+        buildingId: sourceTask.buildingId,
+        floorId: sourceTask.floorId,
+        disciplineId: sourceTask.disciplineId,
+        drawingId: sourceTask.drawingId,
+        pinX: pinX !== undefined ? pinX : sourceTask.pinX,
+        pinY: pinY !== undefined ? pinY : sourceTask.pinY,
+        status: sourceTask.status,
+        category: sourceTask.category,
+        description: sourceTask.description,
+        roomName: sourceTask.roomName,
+        pinName: sourceTask.pinName, // Clone user-defined name
+        gewerk: sourceTask.gewerk,
+        tagNames: [...sourceTask.tagNames],
+        notes: [...sourceTask.notes], // Clone notes array
+        pinCode, // New unique code
+        createdBy: req.user!.id
+      });
+
+      clonedTasks.push(clonedTask);
+    }
+
+    return sendSuccess(res, {
+      count: clonedTasks.length,
+      tasks: clonedTasks
+    }, {}, 201);
   })
 );
 

@@ -162,6 +162,19 @@
             Nhân bản Pin
           </button>
 
+          <!-- Bulk Clone Task Button -->
+          <button
+            v-if="canCloneTask"
+            class="flex items-center justify-center gap-2 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs font-medium text-purple-700 hover:bg-purple-100 disabled:opacity-60"
+            :disabled="processingAction"
+            @click="showBulkCloneModal = true"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+            </svg>
+            Nhân bản hàng loạt
+          </button>
+
           <!-- Move Task Button -->
           <button
             v-if="canMoveTask"
@@ -348,6 +361,14 @@
       @cancel="showCloneModal = false"
     />
 
+    <!-- Bulk Clone Task Modal -->
+    <BulkCloneModal
+      :show="showBulkCloneModal"
+      :processing="processingAction"
+      @confirm="confirmBulkCloneTask"
+      @cancel="showBulkCloneModal = false"
+    />
+
     <!-- Move Task Modal -->
     <MoveTaskModal
       :show="showMoveModal"
@@ -408,6 +429,7 @@ const editError = ref("");
 // Task action modals state
 const showDeleteTaskModal = ref(false);
 const showCloneModal = ref(false);
+const showBulkCloneModal = ref(false);
 const showMoveModal = ref(false);
 const processingAction = ref(false);
 
@@ -866,6 +888,30 @@ const confirmCloneTask = async () => {
   } catch (err) {
     console.error("Clone task error:", err);
     toast.push((err as Error).message || "Lỗi khi nhân bản pin/task", "error");
+  } finally {
+    processingAction.value = false;
+  }
+};
+
+// Bulk Clone Task Handler
+const confirmBulkCloneTask = async (count: number) => {
+  if (!task.value?._id || processingAction.value) return;
+
+  processingAction.value = true;
+  try {
+    const response = await api.post<any>(`/tasks/${task.value._id}/bulk-clone`, {
+      count,
+      pinX: task.value.pinX,
+      pinY: task.value.pinY
+    });
+
+    const clonedCount = response?.count || count;
+    toast.push(`Đã nhân bản thành công ${clonedCount} pin/task`, "success");
+    showBulkCloneModal.value = false;
+    emit("updated");
+  } catch (err) {
+    console.error("Bulk clone task error:", err);
+    toast.push((err as Error).message || "Lỗi khi nhân bản hàng loạt pin/task", "error");
   } finally {
     processingAction.value = false;
   }

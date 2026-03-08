@@ -98,3 +98,14 @@ export const cloneTaskSchema = z.object({
     pinY: pinSchema.optional()
   })
 });
+
+export const bulkCloneTaskSchema = z.object({
+  params: z.object({
+    id: objectIdSchema
+  }),
+  body: z.object({
+    count: z.number().int().min(1).max(50), // Limit to 50 clones at once for safety
+    pinX: pinSchema.optional(),
+    pinY: pinSchema.optional()
+  })
+});
