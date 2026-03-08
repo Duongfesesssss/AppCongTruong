@@ -148,7 +148,7 @@
       <!-- Task Actions Section -->
       <section class="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
         <h3 class="text-sm sm:text-base font-semibold text-slate-900 mb-3 sm:mb-4">Thao tác với Pin/Task</h3>
-        <div class="grid gap-2 sm:grid-cols-3">
+        <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <!-- Clone Task Button -->
           <button
             v-if="canCloneTask"
