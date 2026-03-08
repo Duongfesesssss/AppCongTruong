@@ -77,3 +77,24 @@ export const listTaskSchema = z.object({
     tagNames: z.preprocess(parseTagNamesInput, z.array(tagNameSchema).max(30).optional())
   })
 });
+
+export const moveTaskSchema = z.object({
+  params: z.object({
+    id: objectIdSchema
+  }),
+  body: z.object({
+    drawingId: objectIdSchema,
+    pinX: pinSchema.optional(),
+    pinY: pinSchema.optional()
+  })
+});
+
+export const cloneTaskSchema = z.object({
+  params: z.object({
+    id: objectIdSchema
+  }),
+  body: z.object({
+    pinX: pinSchema.optional(),
+    pinY: pinSchema.optional()
+  })
+});
