@@ -6,7 +6,7 @@ import { requireAuth } from "../middlewares/require-auth";
 import { errors } from "../lib/errors";
 import { TaskModel } from "./task.model";
 import { CounterModel } from "./counter.model";
-import { createOrUpdateTaskSchema, listTaskSchema, taskIdSchema } from "./task.schema";
+import { createOrUpdateTaskSchema, listTaskSchema, taskIdSchema, moveTaskSchema, cloneTaskSchema } from "./task.schema";
 import { DrawingModel } from "../drawings/drawing.model";
 import { ProjectModel } from "../projects/project.model";
 import { buildProjectAccessFilter, ensureProjectRole, canDeleteResource } from "../projects/project-access";
@@ -418,6 +418,103 @@ router.get(
     const zone = await ZoneModel.findOne({ taskId: req.params.id });
     if (!zone) throw errors.notFound("Zone không tồn tại");
     return sendSuccess(res, zone);
+  })
+);
+
+// PUT /api/tasks/:id/move - Di chuyển task sang drawing khác
+router.put(
+  "/:id/move",
+  requireAuth,
+  validate(moveTaskSchema),
+  asyncHandler(async (req, res) => {
+    const task = await TaskModel.findById(req.params.id);
+    if (!task) throw errors.notFound("Task không tồn tại");
+
+    // Check permission: technician or above
+    const project = await ProjectModel.findById(task.projectId);
+    ensureProjectRole(project, req.user!.id, "technician", "Task không tồn tại hoặc không có quyền");
+
+    const { drawingId, pinX, pinY } = req.body;
+
+    // Validate new drawing exists and belongs to the same project
+    const newDrawing = await DrawingModel.findById(drawingId);
+    if (!newDrawing) throw errors.notFound("Drawing đích không tồn tại");
+    if (newDrawing.projectId.toString() !== task.projectId.toString()) {
+      throw errors.forbidden("Không thể di chuyển task sang drawing thuộc project khác");
+    }
+
+    // Update task's drawing and coordinates
+    task.drawingId = newDrawing._id;
+    task.buildingId = newDrawing.buildingId;
+    task.floorId = newDrawing.floorId;
+    task.disciplineId = newDrawing.disciplineId;
+
+    // If new coordinates are provided, update them; otherwise keep current position
+    if (pinX !== undefined) task.pinX = pinX;
+    if (pinY !== undefined) task.pinY = pinY;
+
+    await task.save();
+
+    // Update photos' drawingId to maintain consistency
+    await PhotoModel.updateMany({ taskId: task._id }, { drawingId: newDrawing._id });
+
+    return sendSuccess(res, task);
+  })
+);
+
+// POST /api/tasks/:id/clone - Nhân bản task (không copy ảnh)
+router.post(
+  "/:id/clone",
+  requireAuth,
+  validate(cloneTaskSchema),
+  asyncHandler(async (req, res) => {
+    const sourceTask = await TaskModel.findById(req.params.id);
+    if (!sourceTask) throw errors.notFound("Task không tồn tại");
+
+    // Check permission: admin role required to clone
+    const project = await ProjectModel.findById(sourceTask.projectId);
+    ensureProjectRole(project, req.user!.id, "admin", "Task không tồn tại hoặc không có quyền");
+
+    const { pinX, pinY } = req.body;
+
+    // Get drawing info for pin code generation
+    const drawing = await DrawingModel.findById(sourceTask.drawingId);
+    if (!drawing) throw errors.notFound("Drawing không tồn tại");
+
+    // Generate new pin code
+    const counter = await CounterModel.findOneAndUpdate(
+      { _id: project!._id.toString() },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
+
+    const gewerkCode = toCode(sourceTask.gewerk ?? "NA", 2);
+    const buildingCode = toCode(drawing.parsedMetadata?.buildingCode || "NA", 2);
+    const floorCode = toCode(drawing.parsedMetadata?.floorCode || "NA", 2);
+    const pinCode = formatPinCode(project!.code, buildingCode, floorCode, gewerkCode, counter.seq);
+
+    // Clone task fields: pinName, category, status, notes (NOT photos)
+    const clonedTask = await TaskModel.create({
+      projectId: sourceTask.projectId,
+      buildingId: sourceTask.buildingId,
+      floorId: sourceTask.floorId,
+      disciplineId: sourceTask.disciplineId,
+      drawingId: sourceTask.drawingId,
+      pinX: pinX !== undefined ? pinX : sourceTask.pinX,
+      pinY: pinY !== undefined ? pinY : sourceTask.pinY,
+      status: sourceTask.status,
+      category: sourceTask.category,
+      description: sourceTask.description,
+      roomName: sourceTask.roomName,
+      pinName: sourceTask.pinName, // Clone user-defined name
+      gewerk: sourceTask.gewerk,
+      tagNames: [...sourceTask.tagNames],
+      notes: [...sourceTask.notes], // Clone notes array
+      pinCode, // New unique code
+      createdBy: req.user!.id
+    });
+
+    return sendSuccess(res, clonedTask, {}, 201);
   })
 );
 

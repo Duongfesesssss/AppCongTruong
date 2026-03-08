@@ -145,6 +145,54 @@
         </div>
       </section>
 
+      <!-- Task Actions Section -->
+      <section class="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
+        <h3 class="text-sm sm:text-base font-semibold text-slate-900 mb-3 sm:mb-4">Thao tác với Pin/Task</h3>
+        <div class="grid gap-2 sm:grid-cols-3">
+          <!-- Clone Task Button -->
+          <button
+            v-if="canCloneTask"
+            class="flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+            :disabled="processingAction"
+            @click="showCloneModal = true"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            Nhân bản Pin
+          </button>
+
+          <!-- Move Task Button -->
+          <button
+            v-if="canMoveTask"
+            class="flex items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+            :disabled="processingAction"
+            @click="showMoveModal = true"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+            Di chuyển Pin
+          </button>
+
+          <!-- Delete Task Button -->
+          <button
+            v-if="canDeleteTask"
+            class="flex items-center justify-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+            :disabled="processingAction"
+            @click="showDeleteTaskModal = true"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Xóa Pin
+          </button>
+        </div>
+        <p v-if="!canCloneTask && !canMoveTask && !canDeleteTask" class="text-xs text-slate-500">
+          Bạn không có quyền thực hiện các thao tác này
+        </p>
+      </section>
+
       <!-- Photos Section -->
       <section class="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
@@ -277,6 +325,38 @@
       @confirm="confirmDeletePhoto"
       @cancel="showDeleteConfirm = false"
     />
+
+    <!-- Delete Task Confirmation Modal -->
+    <ConfirmModal
+      :show="showDeleteTaskModal"
+      title="Xóa Pin/Task?"
+      message="Bạn có chắc muốn xóa pin/task này không? Hành động này sẽ xóa cả ảnh và zone liên quan và không thể hoàn tác."
+      confirm-text="Xóa"
+      :danger="true"
+      @confirm="confirmDeleteTask"
+      @cancel="showDeleteTaskModal = false"
+    />
+
+    <!-- Clone Task Modal -->
+    <ConfirmModal
+      :show="showCloneModal"
+      title="Nhân bản Pin/Task?"
+      message="Nhân bản sẽ tạo pin mới với cùng thông tin (Tên, Loại, Trạng thái, Ghi chú) nhưng không copy ảnh. Pin mới sẽ được tạo tại vị trí hiện tại."
+      confirm-text="Nhân bản"
+      :danger="false"
+      @confirm="confirmCloneTask"
+      @cancel="showCloneModal = false"
+    />
+
+    <!-- Move Task Modal -->
+    <MoveTaskModal
+      :show="showMoveModal"
+      :task-id="props.taskId"
+      :current-drawing-id="task?.drawingId"
+      :project-id="task?.projectId"
+      @moved="handleTaskMoved"
+      @cancel="showMoveModal = false"
+    />
   </div>
 </template>
 
@@ -324,6 +404,46 @@ const showDeleteConfirm = ref(false);
 const deletingPhoto = ref<any>(null);
 const savingTask = ref(false);
 const editError = ref("");
+
+// Task action modals state
+const showDeleteTaskModal = ref(false);
+const showCloneModal = ref(false);
+const showMoveModal = ref(false);
+const processingAction = ref(false);
+
+// Check user permissions for task actions
+const user = useState<any>("auth-user", () => null);
+const isTaskCreator = computed(() => {
+  if (!task.value || !user.value) return false;
+  const taskCreatorId = resolveObjectId(task.value.createdBy);
+  const currentUserId = resolveObjectId(user.value.id || user.value._id);
+  return taskCreatorId === currentUserId;
+});
+
+// Get user role from project (check if user is PM/admin)
+const userRole = computed(() => {
+  // This would need to be passed from parent or fetched
+  // For now, we'll use canEditTask as a proxy for having admin rights
+  return props.canEditTask ? "admin" : "technician";
+});
+
+const canDeleteTask = computed(() => {
+  if (!task.value || isOfflineTask.value) return false;
+  // Only creator or admin can delete
+  return isTaskCreator.value || userRole.value === "admin";
+});
+
+const canMoveTask = computed(() => {
+  if (!task.value || isOfflineTask.value) return false;
+  // Technician or admin can move
+  return canEditByRole.value;
+});
+
+const canCloneTask = computed(() => {
+  if (!task.value || isOfflineTask.value) return false;
+  // Only admin can clone
+  return userRole.value === "admin";
+});
 
 type MentionCandidate = {
   id: string;
@@ -695,6 +815,72 @@ const handleAnnotationSaved = async () => {
     await loadTask();
   }
   annotatingPhoto.value = null;
+};
+
+// Delete Task Handler
+const confirmDeleteTask = async () => {
+  if (!task.value?._id || processingAction.value) return;
+
+  processingAction.value = true;
+  try {
+    await api.delete(`/tasks/${task.value._id}`);
+    toast.push("Đã xóa pin/task thành công", "success");
+    showDeleteTaskModal.value = false;
+    emit("updated");
+
+    // Navigate back or close detail view
+    if (process.client) {
+      setTimeout(() => {
+        // Parent component should handle closing the detail view
+        navigateTo("/");
+      }, 500);
+    }
+  } catch (err) {
+    console.error("Delete task error:", err);
+    toast.push((err as Error).message || "Lỗi khi xóa pin/task", "error");
+  } finally {
+    processingAction.value = false;
+  }
+};
+
+// Clone Task Handler
+const confirmCloneTask = async () => {
+  if (!task.value?._id || processingAction.value) return;
+
+  processingAction.value = true;
+  try {
+    const clonedTask = await api.post<any>(`/tasks/${task.value._id}/clone`, {
+      pinX: task.value.pinX,
+      pinY: task.value.pinY
+    });
+    toast.push("Đã nhân bản pin/task thành công", "success");
+    showCloneModal.value = false;
+    emit("updated");
+
+    // Optionally switch to the newly cloned task
+    if (process.client && clonedTask._id) {
+      setTimeout(() => {
+        // Parent component should handle navigation to new task
+      }, 500);
+    }
+  } catch (err) {
+    console.error("Clone task error:", err);
+    toast.push((err as Error).message || "Lỗi khi nhân bản pin/task", "error");
+  } finally {
+    processingAction.value = false;
+  }
+};
+
+// Move Task Handler
+const handleTaskMoved = () => {
+  toast.push("Đã di chuyển pin/task thành công", "success");
+  showMoveModal.value = false;
+  emit("updated");
+
+  // Reload task to get updated data
+  if (process.client && navigator.onLine) {
+    void loadTask();
+  }
 };
 
 const handleDeletePhoto = (photo: any) => {
