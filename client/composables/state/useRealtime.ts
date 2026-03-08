@@ -14,12 +14,13 @@ export type RealtimeNotification = {
   createdAt: number | string;
 };
 
-export type ChatScope = "global" | "project";
+export type ChatScope = "global" | "project" | "dm";
 
 export type ChatMessage = {
   id: string;
   scope: ChatScope;
   projectId?: string;
+  dmParticipants?: string[];
   senderUserId: string;
   senderName: string;
   senderEmail: string;
@@ -43,9 +44,19 @@ export type MentionCandidate = {
   mentionToken: string;
 };
 
+export type DmConversation = {
+  partnerId: string;
+  partnerName: string;
+  partnerEmail: string;
+  lastMessage: string;
+  lastSenderName: string;
+  lastAt: string | number;
+};
+
 type SendChatPayload = {
   scope: ChatScope;
   projectId?: string;
+  dmPartnerId?: string;
   content: string;
   deepLink?: {
     drawingId?: string;
@@ -83,6 +94,8 @@ export const useRealtime = () => {
   const notifications = useState<RealtimeNotification[]>("realtime-notifications", () => []);
   const globalMessages = useState<ChatMessage[]>("realtime-chat-global", () => []);
   const projectMessages = useState<Record<string, ChatMessage[]>>("realtime-chat-projects", () => ({}));
+  const dmMessages = useState<Record<string, ChatMessage[]>>("realtime-chat-dm", () => ({}));
+  const dmConversations = useState<DmConversation[]>("realtime-dm-conversations", () => []);
   const mentionCandidates = useState<Record<string, MentionCandidate[]>>("realtime-mention-candidates", () => ({}));
   const lastError = useState<string>("realtime-last-error", () => "");
 
@@ -121,9 +134,21 @@ export const useRealtime = () => {
     );
   };
 
-  const handleIncomingChatMessage = (message: ChatMessage) => {
+  const handleIncomingChatMessage = (message: ChatMessage, currentUserId?: string) => {
     if (message.scope === "global") {
       globalMessages.value = appendMessage(globalMessages.value, message);
+      return;
+    }
+
+    if (message.scope === "dm") {
+      // Determine partner: participant that is NOT the current user
+      // If we don't have currentUserId, fall back to using senderUserId logic
+      const partnerId = message.dmParticipants?.find((id) => id !== currentUserId)
+        ?? (currentUserId && message.senderUserId !== currentUserId ? message.senderUserId : message.dmParticipants?.[0] ?? "");
+      if (!partnerId) return;
+      const existing = dmMessages.value[partnerId] || [];
+      dmMessages.value = { ...dmMessages.value, [partnerId]: appendMessage(existing, message) };
+      void fetchDmConversations();
       return;
     }
 
@@ -178,7 +203,9 @@ export const useRealtime = () => {
     });
 
     socket.on("chat:message", (payload: ChatMessage) => {
-      handleIncomingChatMessage(payload);
+      // Pass current user id from auth state if available
+      const auth = useState<{ id?: string } | null>("auth-user", () => null);
+      handleIncomingChatMessage(payload, auth.value?.id);
     });
   };
 
@@ -213,12 +240,14 @@ export const useRealtime = () => {
     handleNotificationRead({ all: true, readAt: Date.now() });
   };
 
-  const fetchChatMessages = async (scope: ChatScope, projectId?: string) => {
+  const fetchChatMessages = async (scope: ChatScope, projectId?: string, dmPartnerId?: string) => {
     if (scope === "project" && !projectId) return [];
+    if (scope === "dm" && !dmPartnerId) return [];
     const query = new URLSearchParams();
     query.set("scope", scope);
     query.set("limit", "80");
     if (projectId) query.set("projectId", projectId);
+    if (dmPartnerId) query.set("dmPartnerId", dmPartnerId);
 
     const data = await api.get<ChatMessage[]>(`/chats/messages?${query.toString()}`);
     if (scope === "global") {
@@ -226,16 +255,30 @@ export const useRealtime = () => {
       return globalMessages.value;
     }
 
-    projectMessages.value = {
-      ...projectMessages.value,
-      [projectId!]: data || []
-    };
+    if (scope === "dm") {
+      dmMessages.value = { ...dmMessages.value, [dmPartnerId!]: data || [] };
+      return dmMessages.value[dmPartnerId!] || [];
+    }
+
+    projectMessages.value = { ...projectMessages.value, [projectId!]: data || [] };
     return projectMessages.value[projectId!] || [];
+  };
+
+  const fetchDmConversations = async () => {
+    const data = await api.get<DmConversation[]>("/chats/dm-conversations").catch(() => null);
+    if (data) dmConversations.value = data;
+    return dmConversations.value;
+  };
+
+  const getDmMessages = (partnerId?: string) => {
+    if (!partnerId) return [];
+    return dmMessages.value[partnerId] || [];
   };
 
   const sendChatMessage = async (payload: SendChatPayload) => {
     const message = await api.post<ChatMessage>("/chats/messages", payload);
-    handleIncomingChatMessage(message);
+    const auth = useState<{ id?: string } | null>("auth-user", () => null);
+    handleIncomingChatMessage(message, auth.value?.id);
     return message;
   };
 
@@ -289,12 +332,16 @@ export const useRealtime = () => {
     unreadCount,
     globalMessages,
     projectMessages,
+    dmMessages,
+    dmConversations,
     lastError,
     init,
     fetchNotifications,
     markNotificationRead,
     markAllNotificationsRead,
     fetchChatMessages,
+    fetchDmConversations,
+    getDmMessages,
     sendChatMessage,
     fetchMentionCandidates,
     getMentionCandidates,

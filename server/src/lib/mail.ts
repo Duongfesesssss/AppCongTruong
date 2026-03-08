@@ -25,9 +25,11 @@ export const initMailTransporter = () => {
       host: config.mail.host,
       port: config.mail.port,
       secure: config.mail.secure,
+      // port 587 với secure=false dùng STARTTLS, cần requireTLS để Gmail chấp nhận
+      requireTLS: !config.mail.secure && config.mail.port === 587,
       auth: {
         user: config.mail.user,
-        pass: config.mail.password
+        pass: config.mail.password.replace(/\s+/g, "") // App Password có thể có spaces
       }
     });
 
@@ -85,7 +87,7 @@ export const sendMentionEmail = async (params: {
   recipientName: string;
   actorName: string;
   message: string;
-  scope: "global" | "project";
+  scope: string;
   projectName?: string;
   deepLinkUrl?: string;
 }): Promise<boolean> => {

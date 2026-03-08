@@ -193,7 +193,8 @@
             :task-data="selectedTask"
             :can-delete-photo="canManageTasks"
             :can-edit-task="canManageTasks"
-            @updated="reloadDrawingData"
+            :is-admin="isProjectAdmin"
+            @updated="reloadTasksOnly"
           />
         </section>
       </div>
@@ -205,7 +206,8 @@
         :task-id="selected.id"
         :can-delete-photo="canManageTasks"
         :can-edit-task="canManageTasks"
-        @updated="reloadTask"
+        :is-admin="isProjectAdmin"
+        @updated="reloadTasksOnly"
       />
     </template>
 
@@ -274,6 +276,7 @@ const canManageTasks = computed(() => {
   const role = selected.value?.projectRole;
   return role === "admin" || role === "technician";
 });
+const isProjectAdmin = computed(() => selected.value?.projectRole === "admin");
 const compareOpacity = computed(() => compareOpacityPercent.value / 100);
 const compareCandidates = computed(() =>
   drawingVersions.value.filter((item) => item?._id && item._id !== activeDrawingId.value)

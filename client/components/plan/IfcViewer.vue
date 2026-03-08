@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
 import { IFCLoader } from 'web-ifc-three/IFCLoader';
 
 type Drawing = {
@@ -48,6 +49,21 @@ const clippingPosition = ref({
 });
 const showClippingPanel = ref(false);
 
+// Storey filter state
+interface Storey {
+  expressID: number;
+  name: string;
+  elevation: number;
+  elementIds: number[];
+}
+const storeys = ref<Storey[]>([]);
+const selectedStoreyId = ref<number | null>(null);
+const storeyLoading = ref(false);
+const showStoreyDropdown = ref(false);
+
+// Gizmo state
+const gizmoMode = ref(false);
+
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let renderer: THREE.WebGLRenderer | null = null;
@@ -58,10 +74,22 @@ let currentModel: THREE.Group | null = null;
 let clippingPlanes: THREE.Plane[] = [];
 let clippingHelpers: THREE.PlaneHelper[] = [];
 let modelBounds: THREE.Box3 | null = null;
+let storeySubset: THREE.Object3D | null = null;
+let transformControls: TransformControls | null = null;
+let gizmoObjects: Record<string, THREE.Mesh> = {};
 
 const drawingTitle = computed(() => {
   return props.drawing?.name || 'No drawing selected';
 });
+
+const selectedStoreyName = computed(() => {
+  if (selectedStoreyId.value === null) return null;
+  return storeys.value.find(s => s.expressID === selectedStoreyId.value)?.name ?? null;
+});
+
+const hasActiveClipping = computed(() =>
+  clippingEnabled.value.x || clippingEnabled.value.y || clippingEnabled.value.z
+);
 
 const isLoading = computed(() => {
   return props.loading || internalLoading.value;
@@ -155,7 +183,17 @@ const loadIfcFile = async (drawing: Drawing) => {
   loadingProgress.value = 0;
 
   try {
-    // Remove previous model
+    // Remove previous model + storey subset
+    if (storeySubset && scene) {
+      scene.remove(storeySubset);
+      storeySubset = null;
+    }
+    storeys.value = [];
+    selectedStoreyId.value = null;
+    if (gizmoMode.value) {
+      gizmoMode.value = false;
+      removeGizmos();
+    }
     if (currentModel) {
       scene.remove(currentModel);
       currentModel = null;
@@ -206,12 +244,284 @@ const loadIfcFile = async (drawing: Drawing) => {
 
     internalLoading.value = false;
     emit('loaded');
+    // Load storey list after model is ready
+    loadStoreys();
   } catch (error) {
     console.error('Failed to load IFC:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     internalError.value = `Không thể tải file IFC: ${errorMessage}`;
     internalLoading.value = false;
     emit('error', internalError.value);
+  }
+};
+
+// --- IfcBuildingStorey filter ---
+
+const findStoreyNodes = (node: any): any[] => {
+  const result: any[] = [];
+  if (node.type === 'IFCBUILDINGSTOREY') result.push(node);
+  if (node.children) {
+    for (const child of node.children) {
+      result.push(...findStoreyNodes(child));
+    }
+  }
+  return result;
+};
+
+const collectAllChildIds = (nodes: any[]): number[] => {
+  const ids: number[] = [];
+  for (const node of nodes) {
+    if (node.expressID != null) ids.push(node.expressID);
+    if (node.children) ids.push(...collectAllChildIds(node.children));
+  }
+  return ids;
+};
+
+const loadStoreys = async () => {
+  if (!ifcLoader) return;
+  storeyLoading.value = true;
+  try {
+    const spatialTree = await ifcLoader.ifcManager.getSpatialStructure(0);
+    const storeyNodes = findStoreyNodes(spatialTree);
+
+    const list: Storey[] = [];
+    for (const node of storeyNodes) {
+      const props = await ifcLoader.ifcManager.getItemProperties(0, node.expressID, false);
+      const name =
+        props.LongName?.value ||
+        props.Name?.value ||
+        `Tầng ${list.length + 1}`;
+      const elevation = props.Elevation?.value ?? 0;
+      const elementIds = collectAllChildIds(node.children || []);
+      list.push({ expressID: node.expressID, name, elevation, elementIds });
+    }
+
+    storeys.value = list.sort((a, b) => a.elevation - b.elevation);
+  } catch (e) {
+    console.warn('Could not load storeys:', e);
+  } finally {
+    storeyLoading.value = false;
+  }
+};
+
+const applyClippingToObject = (obj: THREE.Object3D, activePlanes: THREE.Plane[]) => {
+  obj.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh) {
+      const mesh = child as THREE.Mesh;
+      if (mesh.material) {
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mats.forEach(mat => {
+          mat.clippingPlanes = activePlanes;
+          mat.clipShadows = true;
+        });
+      }
+    }
+  });
+};
+
+const filterByStorey = async (storeyId: number | null) => {
+  selectedStoreyId.value = storeyId;
+  showStoreyDropdown.value = false;
+
+  if (!currentModel || !scene || !ifcLoader) return;
+
+  // Remove previous subset
+  if (storeySubset && scene) {
+    scene.remove(storeySubset);
+    storeySubset = null;
+  }
+
+  if (storeyId === null) {
+    currentModel.visible = true;
+    updateClippingPlanes();
+    return;
+  }
+
+  const storey = storeys.value.find(s => s.expressID === storeyId);
+  if (!storey || storey.elementIds.length === 0) {
+    currentModel.visible = true;
+    updateClippingPlanes();
+    return;
+  }
+
+  currentModel.visible = false;
+  try {
+    storeySubset = ifcLoader.ifcManager.createSubset({
+      modelID: 0,
+      scene: scene,
+      ids: storey.elementIds,
+      removePrevious: true,
+    });
+  } catch (e) {
+    console.warn('createSubset failed, showing full model:', e);
+    currentModel.visible = true;
+  }
+
+  updateClippingPlanes();
+};
+
+// --- TransformControls Gizmo ---
+
+const getGizmoSize = () => {
+  if (!modelBounds) return 20;
+  const size = modelBounds.getSize(new THREE.Vector3());
+  return Math.max(size.x, size.y, size.z) * 1.5;
+};
+
+const getGizmoColor = (axis: string) =>
+  axis === 'x' ? 0xff3333 : axis === 'y' ? 0x33cc33 : 0x3399ff;
+
+const syncGizmoPositionFromPlane = (axis: 'x' | 'y' | 'z') => {
+  const mesh = gizmoObjects[axis];
+  if (!mesh || !modelBounds) return;
+  const center = modelBounds.getCenter(new THREE.Vector3());
+  const size = modelBounds.getSize(new THREE.Vector3());
+  const offset = clippingPosition.value[axis] * (size[axis] / 2);
+  if (axis === 'x') mesh.position.set(center.x + offset, center.y, center.z);
+  else if (axis === 'y') mesh.position.set(center.x, center.y + offset, center.z);
+  else mesh.position.set(center.x, center.y, center.z + offset);
+};
+
+const createOrUpdateGizmos = () => {
+  if (!scene || !camera || !renderer || !modelBounds) return;
+
+  const axes: ('x' | 'y' | 'z')[] = ['x', 'y', 'z'];
+  const gizmoSize = getGizmoSize();
+
+  for (const axis of axes) {
+    const isActive = clippingEnabled.value[axis];
+
+    if (!isActive) {
+      // Remove gizmo for this axis if exists
+      if (gizmoObjects[axis]) {
+        scene.remove(gizmoObjects[axis]);
+        gizmoObjects[axis].geometry.dispose();
+        (gizmoObjects[axis].material as THREE.Material).dispose();
+        delete gizmoObjects[axis];
+      }
+      continue;
+    }
+
+    // Create gizmo mesh if not exists
+    if (!gizmoObjects[axis]) {
+      const geo = new THREE.PlaneGeometry(gizmoSize, gizmoSize);
+      const mat = new THREE.MeshBasicMaterial({
+        color: getGizmoColor(axis),
+        transparent: true,
+        opacity: 0.15,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.name = `gizmo-${axis}`;
+
+      if (axis === 'x') mesh.rotation.y = Math.PI / 2;
+      else if (axis === 'y') mesh.rotation.x = Math.PI / 2;
+      // z: no rotation
+
+      scene.add(mesh);
+      gizmoObjects[axis] = mesh;
+    }
+
+    // Sync position
+    syncGizmoPositionFromPlane(axis);
+  }
+
+  // Set up or update TransformControls for gizmo mode
+  if (gizmoMode.value) {
+    attachTransformControls();
+  }
+};
+
+const attachTransformControls = () => {
+  if (!scene || !camera || !renderer) return;
+
+  if (!transformControls) {
+    transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.setMode('translate');
+    transformControls.setSpace('world');
+    transformControls.size = 2; // Phóng to mũi tên cho dễ thấy
+    scene.add(transformControls as unknown as THREE.Object3D);
+
+    transformControls.addEventListener('dragging-changed', (event: any) => {
+      if (controls) controls.enabled = !event.value;
+      if (renderer) {
+        renderer.domElement.style.cursor = event.value ? 'grabbing' : 'default';
+      }
+    });
+
+    transformControls.addEventListener('change', () => {
+      if (!renderer) return;
+      const isDragging = (transformControls as any).dragging;
+      const hoveredAxis = (transformControls as any).axis;
+      if (isDragging) {
+        renderer.domElement.style.cursor = 'grabbing';
+      } else if (hoveredAxis) {
+        renderer.domElement.style.cursor = 'grab';
+      } else {
+        renderer.domElement.style.cursor = 'default';
+      }
+    });
+
+    transformControls.addEventListener('objectChange', () => {
+      const obj = transformControls!.object;
+      if (!obj || !modelBounds) return;
+      const axisEntry = Object.entries(gizmoObjects).find(([, mesh]) => mesh === obj);
+      if (!axisEntry) return;
+      const axis = axisEntry[0] as 'x' | 'y' | 'z';
+
+      const center = modelBounds.getCenter(new THREE.Vector3());
+      const size = modelBounds.getSize(new THREE.Vector3());
+
+      // Constrain: chỉ cho di chuyển theo đúng trục của mặt cắt
+      if (axis === 'x') { obj.position.y = center.y; obj.position.z = center.z; }
+      else if (axis === 'y') { obj.position.x = center.x; obj.position.z = center.z; }
+      else { obj.position.x = center.x; obj.position.y = center.y; }
+
+      const worldPos = axis === 'x' ? obj.position.x : axis === 'y' ? obj.position.y : obj.position.z;
+      const centerVal = axis === 'x' ? center.x : axis === 'y' ? center.y : center.z;
+      const halfSize = size[axis] / 2;
+
+      const normalized = halfSize > 0 ? (worldPos - centerVal) / halfSize : 0;
+      clippingPosition.value[axis] = Math.max(-1, Math.min(1, normalized));
+      updateClippingPlanes();
+    });
+  }
+
+  // Attach to first active gizmo, hiện tất cả mũi tên (X/Y/Z) để dễ thấy
+  const firstActive = (['x', 'y', 'z'] as const).find(a => clippingEnabled.value[a] && gizmoObjects[a]);
+  if (firstActive) {
+    transformControls.showX = true;
+    transformControls.showY = true;
+    transformControls.showZ = true;
+    transformControls.attach(gizmoObjects[firstActive]);
+  }
+};
+
+const removeGizmos = () => {
+  if (transformControls) {
+    transformControls.detach();
+    if (scene) scene.remove(transformControls as unknown as THREE.Object3D);
+    transformControls.dispose();
+    transformControls = null;
+  }
+  if (renderer) renderer.domElement.style.cursor = 'default';
+  if (scene) {
+    for (const axis of Object.keys(gizmoObjects)) {
+      scene.remove(gizmoObjects[axis]);
+      gizmoObjects[axis].geometry.dispose();
+      (gizmoObjects[axis].material as THREE.Material).dispose();
+    }
+  }
+  gizmoObjects = {};
+};
+
+const toggleGizmoMode = () => {
+  gizmoMode.value = !gizmoMode.value;
+  if (gizmoMode.value) {
+    createOrUpdateGizmos();
+  } else {
+    removeGizmos();
   }
 };
 
@@ -267,33 +577,30 @@ const updateClippingPlanes = () => {
     clippingHelpers.push(helper);
   }
 
-  // Apply clipping planes to all meshes in the model
+  // Apply clipping planes to model and active subset
   const activePlanes: THREE.Plane[] = [];
   if (clippingEnabled.value.x) activePlanes.push(clippingPlanes[0]);
   if (clippingEnabled.value.y) activePlanes.push(clippingPlanes[1]);
   if (clippingEnabled.value.z) activePlanes.push(clippingPlanes[2]);
 
-  currentModel.traverse((child) => {
-    if ((child as THREE.Mesh).isMesh) {
-      const mesh = child as THREE.Mesh;
-      if (mesh.material) {
-        if (Array.isArray(mesh.material)) {
-          mesh.material.forEach(mat => {
-            mat.clippingPlanes = activePlanes;
-            mat.clipShadows = true;
-          });
-        } else {
-          mesh.material.clippingPlanes = activePlanes;
-          mesh.material.clipShadows = true;
-        }
-      }
-    }
-  });
+  applyClippingToObject(currentModel, activePlanes);
+  if (storeySubset) applyClippingToObject(storeySubset, activePlanes);
+
+  // Sync gizmo positions if gizmo mode is on, but skip during active drag
+  // (gizmo mesh is source of truth while dragging — re-attaching would reset drag state)
+  const isDragging = (transformControls as any)?.dragging;
+  if (gizmoMode.value && !isDragging) {
+    (['x', 'y', 'z'] as const).forEach(axis => {
+      if (gizmoObjects[axis]) syncGizmoPositionFromPlane(axis);
+    });
+    createOrUpdateGizmos();
+  }
 };
 
 const toggleClipping = (axis: 'x' | 'y' | 'z') => {
   clippingEnabled.value[axis] = !clippingEnabled.value[axis];
   updateClippingPlanes();
+  if (gizmoMode.value) createOrUpdateGizmos();
 };
 
 const updateClippingPosition = (axis: 'x' | 'y' | 'z', value: number) => {
@@ -304,6 +611,10 @@ const updateClippingPosition = (axis: 'x' | 'y' | 'z', value: number) => {
 const resetClipping = () => {
   clippingEnabled.value = { x: false, y: false, z: false };
   clippingPosition.value = { x: 0, y: 0, z: 0 };
+  if (gizmoMode.value) {
+    gizmoMode.value = false;
+    removeGizmos();
+  }
   updateClippingPlanes();
 };
 
@@ -338,6 +649,18 @@ const cleanup = () => {
     controls.dispose();
     controls = null;
   }
+
+  // Clean up gizmos
+  removeGizmos();
+  gizmoMode.value = false;
+
+  // Clean up storey subset
+  if (storeySubset && scene) {
+    scene.remove(storeySubset);
+    storeySubset = null;
+  }
+  storeys.value = [];
+  selectedStoreyId.value = null;
 
   // Clean up clipping helpers
   if (scene) {
@@ -381,9 +704,17 @@ watch(
   }
 );
 
+const closeStoreyDropdown = (e: MouseEvent) => {
+  const target = e.target as HTMLElement;
+  if (!target.closest('.storey-dropdown-root')) {
+    showStoreyDropdown.value = false;
+  }
+};
+
 onMounted(() => {
   initScene();
   window.addEventListener('resize', handleResize);
+  document.addEventListener('click', closeStoreyDropdown);
 
   if (props.drawing && props.drawing.fileType === '3d') {
     loadIfcFile(props.drawing);
@@ -392,6 +723,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
+  document.removeEventListener('click', closeStoreyDropdown);
   cleanup();
 });
 </script>
@@ -411,6 +743,53 @@ onUnmounted(() => {
         </p>
       </div>
       <div class="flex items-center gap-1 sm:gap-2">
+        <!-- Storey filter dropdown -->
+        <div v-if="storeys.length > 0" class="storey-dropdown-root relative">
+          <button
+            class="btn"
+            :class="{ 'bg-amber-50 text-amber-700 border-amber-300': selectedStoreyId !== null }"
+            title="Lọc theo tầng"
+            @click="showStoreyDropdown = !showStoreyDropdown"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M3 4h18M3 9h18M3 14h18M3 19h18" />
+            </svg>
+            <span class="hidden sm:inline ml-1">
+              {{ selectedStoreyName ?? 'Tầng' }}
+            </span>
+          </button>
+          <div
+            v-if="showStoreyDropdown"
+            class="absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border border-slate-200 bg-white shadow-lg"
+          >
+            <div class="py-1">
+              <button
+                class="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                :class="{ 'font-semibold text-blue-600': selectedStoreyId === null }"
+                @click="filterByStorey(null)"
+              >
+                Tất cả tầng
+              </button>
+              <div class="border-t border-slate-100 my-1"></div>
+              <button
+                v-for="storey in storeys"
+                :key="storey.expressID"
+                class="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                :class="{ 'font-semibold text-blue-600': selectedStoreyId === storey.expressID }"
+                @click="filterByStorey(storey.expressID)"
+              >
+                {{ storey.name }}
+                <span class="ml-1 text-xs text-slate-400">({{ storey.elevation.toFixed(1) }}m)</span>
+              </button>
+            </div>
+          </div>
+          <!-- Loading indicator for storeys -->
+          <div v-if="storeyLoading" class="absolute right-0 top-full z-50 mt-1 w-36 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 shadow-lg">
+            Đang tải danh sách tầng...
+          </div>
+        </div>
+
         <button
           v-if="currentModel"
           class="btn"
@@ -463,6 +842,20 @@ onUnmounted(() => {
         <div class="bg-slate-50 border-b border-slate-200 px-3 py-2 sm:px-4 sm:py-3 flex items-center justify-between">
           <h3 class="text-sm font-semibold text-slate-900">Mặt cắt 3D</h3>
           <div class="flex items-center gap-1">
+            <!-- Gizmo toggle button (chỉ hiện khi có ít nhất 1 plane active) -->
+            <button
+              v-if="hasActiveClipping"
+              class="btn-small"
+              :class="{ 'bg-purple-100 text-purple-700 border-purple-300': gizmoMode }"
+              :title="gizmoMode ? 'Tắt Gizmo kéo' : 'Bật Gizmo kéo mặt cắt'"
+              @click="toggleGizmoMode"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0V11" />
+              </svg>
+              <span class="ml-1 text-xs">{{ gizmoMode ? 'Gizmo ON' : 'Gizmo' }}</span>
+            </button>
             <button
               class="btn-small"
               title="Reset tất cả"
@@ -590,10 +983,16 @@ onUnmounted(() => {
           </div>
 
           <!-- Info -->
-          <div class="pt-3 border-t border-slate-200">
+          <div class="pt-3 border-t border-slate-200 space-y-1.5">
             <p class="text-xs text-slate-500">
               💡 Bật/tắt các mặt cắt để xem bên trong mô hình 3D.
               Kéo thanh trượt để điều chỉnh vị trí mặt cắt.
+            </p>
+            <p v-if="hasActiveClipping" class="text-xs text-purple-600">
+              🖐 Bấm <strong>Gizmo</strong> để kéo mặt cắt trực tiếp trên 3D bằng mũi tên.
+            </p>
+            <p v-if="gizmoMode" class="text-xs text-purple-700 font-medium">
+              ✅ Gizmo đang bật — kéo mũi tên màu trên canvas để di chuyển mặt cắt.
             </p>
           </div>
         </div>

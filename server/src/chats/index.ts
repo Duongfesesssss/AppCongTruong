@@ -113,6 +113,7 @@ const toChatMessageResponse = (message: any) => ({
   id: message._id.toString(),
   scope: message.scope,
   projectId: message.projectId ? message.projectId.toString() : undefined,
+  dmParticipants: message.dmParticipants ? message.dmParticipants.map((id: any) => id.toString()) : undefined,
   senderUserId: message.senderUserId.toString(),
   senderName: message.senderName,
   senderEmail: message.senderEmail,
@@ -143,9 +144,11 @@ const resolveMentionedUsers = async (scope: ChatScope, projectId: string | undef
 };
 
 const assertChatScopeAccess = async (scope: ChatScope, projectId: string | undefined, userId: string) => {
-  if (scope !== "project") return;
-  const project = await ProjectModel.findById(projectId);
-  ensureProjectRole(project, userId, "technician", "Project khong ton tai hoac khong co quyen");
+  if (scope === "project") {
+    const project = await ProjectModel.findById(projectId);
+    ensureProjectRole(project, userId, "technician", "Project khong ton tai hoac khong co quyen");
+  }
+  // dm: no extra check needed — access validated via dmParticipants filter
 };
 
 const toMentionCandidate = (user: { _id: any; name?: string; email: string }) => {
@@ -187,12 +190,60 @@ router.get(
 );
 
 router.get(
+  "/dm-conversations",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+
+    // Aggregate: get latest DM message per unique partner
+    const conversations = await ChatMessageModel.aggregate([
+      { $match: { scope: "dm", dmParticipants: new (require("mongoose").Types.ObjectId)(userId) } },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: {
+            $cond: [
+              { $eq: [{ $arrayElemAt: ["$dmParticipants", 0] }, new (require("mongoose").Types.ObjectId)(userId)] },
+              { $arrayElemAt: ["$dmParticipants", 1] },
+              { $arrayElemAt: ["$dmParticipants", 0] }
+            ]
+          },
+          lastMessage: { $first: "$content" },
+          lastAt: { $first: "$createdAt" },
+          lastSenderName: { $first: "$senderName" }
+        }
+      },
+      { $sort: { lastAt: -1 } }
+    ]);
+
+    const partnerIds = conversations.map((c: any) => c._id);
+    const partners = await UserModel.find({ _id: { $in: partnerIds } }).select("_id name email").lean();
+    const partnerMap = new Map(partners.map((p: any) => [p._id.toString(), p]));
+
+    const result = conversations.map((c: any) => {
+      const partner = partnerMap.get(c._id.toString());
+      return {
+        partnerId: c._id.toString(),
+        partnerName: partner?.name || partner?.email || "Unknown",
+        partnerEmail: partner?.email || "",
+        lastMessage: c.lastMessage,
+        lastSenderName: c.lastSenderName,
+        lastAt: c.lastAt
+      };
+    });
+
+    return sendSuccess(res, result);
+  })
+);
+
+router.get(
   "/messages",
   requireAuth,
   validate(listChatMessagesSchema),
   asyncHandler(async (req, res) => {
     const scope = req.query.scope as ChatScope;
     const projectId = req.query.projectId as string | undefined;
+    const dmPartnerId = req.query.dmPartnerId as string | undefined;
     const limit = (req.query.limit as number | undefined) ?? 50;
     const before = req.query.before as number | undefined;
 
@@ -201,6 +252,11 @@ router.get(
     const filter: Record<string, unknown> = { scope };
     if (scope === "project") {
       filter.projectId = projectId;
+    } else if (scope === "dm") {
+      const mongoose = require("mongoose");
+      filter.dmParticipants = {
+        $all: [new mongoose.Types.ObjectId(req.user!.id), new mongoose.Types.ObjectId(dmPartnerId)]
+      };
     }
     if (before) {
       filter.createdAt = { $lt: new Date(before) };
@@ -217,9 +273,10 @@ router.post(
   requireAuth,
   validate(createChatMessageSchema),
   asyncHandler(async (req, res) => {
-    const { scope, projectId, content, deepLink, snapshotDataUrl } = req.body as {
+    const { scope, projectId, dmPartnerId, content, deepLink, snapshotDataUrl } = req.body as {
       scope: ChatScope;
       projectId?: string;
+      dmPartnerId?: string;
       content: string;
       deepLink?: ChatDeepLink;
       snapshotDataUrl?: string;
@@ -227,19 +284,31 @@ router.post(
 
     await assertChatScopeAccess(scope, projectId, req.user!.id);
 
+    // Validate DM partner exists
+    if (scope === "dm") {
+      const partner = await UserModel.findById(dmPartnerId).select("_id").lean();
+      if (!partner) throw errors.notFound("Nguoi nhan khong ton tai");
+    }
+
     const safeContent = sanitizeText(content).trim();
     if (!safeContent) {
       throw errors.validation("Noi dung chat khong duoc de trong");
     }
 
     const [mentionedUsers, snapshot] = await Promise.all([
-      resolveMentionedUsers(scope, projectId, safeContent),
+      scope !== "dm" ? resolveMentionedUsers(scope, projectId, safeContent) : Promise.resolve([]),
       saveSnapshot(snapshotDataUrl)
     ]);
+
+    const mongoose = require("mongoose");
+    const dmParticipants = scope === "dm"
+      ? [new mongoose.Types.ObjectId(req.user!.id), new mongoose.Types.ObjectId(dmPartnerId)]
+      : undefined;
 
     const message = await ChatMessageModel.create({
       scope,
       projectId,
+      dmParticipants,
       senderUserId: req.user!.id,
       senderName: req.user!.name || req.user!.email,
       senderEmail: req.user!.email,
@@ -255,6 +324,9 @@ router.post(
     if (scope === "project") {
       const { userIds } = await getProjectUserIds(projectId!);
       recipientUserIds = userIds;
+    } else if (scope === "dm") {
+      // Only send to the partner (sender gets it via optimistic update)
+      recipientUserIds = [dmPartnerId!];
     } else {
       const users = await UserModel.find({}).select("_id").lean();
       recipientUserIds = users.map((item) => item._id.toString());

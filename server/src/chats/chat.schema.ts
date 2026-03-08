@@ -2,13 +2,14 @@ import { z } from "zod";
 
 import { objectIdSchema } from "../lib/validators";
 
-const chatScopeSchema = z.enum(["global", "project"]);
+const chatScopeSchema = z.enum(["global", "project", "dm"]);
 
 export const listChatMessagesSchema = z.object({
   query: z
     .object({
       scope: chatScopeSchema,
       projectId: objectIdSchema.optional(),
+      dmPartnerId: objectIdSchema.optional(),
       limit: z
         .preprocess((value) => {
           if (value === undefined || value === null || value === "") return 50;
@@ -26,10 +27,10 @@ export const listChatMessagesSchema = z.object({
     })
     .superRefine((value, ctx) => {
       if (value.scope === "project" && !value.projectId) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "projectId bat buoc voi scope=project"
-        });
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "projectId bat buoc voi scope=project" });
+      }
+      if (value.scope === "dm" && !value.dmPartnerId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "dmPartnerId bat buoc voi scope=dm" });
       }
     })
 });
@@ -55,6 +56,7 @@ export const createChatMessageSchema = z.object({
     .object({
       scope: chatScopeSchema,
       projectId: objectIdSchema.optional(),
+      dmPartnerId: objectIdSchema.optional(),
       content: z.string().min(1).max(5000),
       deepLink: z
         .object({
@@ -69,10 +71,10 @@ export const createChatMessageSchema = z.object({
     })
     .superRefine((value, ctx) => {
       if (value.scope === "project" && !value.projectId) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "projectId bat buoc voi scope=project"
-        });
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "projectId bat buoc voi scope=project" });
+      }
+      if (value.scope === "dm" && !value.dmPartnerId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "dmPartnerId bat buoc voi scope=dm" });
       }
     })
 });

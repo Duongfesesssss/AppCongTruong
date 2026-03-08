@@ -391,6 +391,7 @@ const props = defineProps<{
   taskData?: Record<string, unknown> | null;
   canDeletePhoto?: boolean;
   canEditTask?: boolean;
+  isAdmin?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -442,29 +443,21 @@ const isTaskCreator = computed(() => {
   return taskCreatorId === currentUserId;
 });
 
-// Get user role from project (check if user is PM/admin)
-const userRole = computed(() => {
-  // This would need to be passed from parent or fetched
-  // For now, we'll use canEditTask as a proxy for having admin rights
-  return props.canEditTask ? "admin" : "technician";
-});
-
 const canDeleteTask = computed(() => {
   if (!task.value || isOfflineTask.value) return false;
-  // Only creator or admin can delete
-  return isTaskCreator.value || userRole.value === "admin";
+  // Project admin (owner) có thể xóa mọi task; người tạo chỉ xóa task của mình
+  return props.isAdmin === true || isTaskCreator.value;
 });
 
 const canMoveTask = computed(() => {
   if (!task.value || isOfflineTask.value) return false;
-  // Technician or admin can move
   return canEditByRole.value;
 });
 
 const canCloneTask = computed(() => {
   if (!task.value || isOfflineTask.value) return false;
-  // Only admin can clone
-  return userRole.value === "admin";
+  // Tất cả member (admin + technician) đều có thể clone
+  return canEditByRole.value;
 });
 
 type MentionCandidate = {

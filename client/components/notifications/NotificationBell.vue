@@ -66,8 +66,10 @@ import { useRealtime } from "~/composables/state/useRealtime";
 import { useSelectedNode } from "~/composables/state/useSelectedNode";
 import { useProjectTree } from "~/composables/api/useProjectTree";
 import { useDeepLinkFocus } from "~/composables/state/useDeepLinkFocus";
+import { useChatPanel } from "~/composables/state/useChatPanel";
 
 const realtime = useRealtime();
+const chatPanel = useChatPanel();
 const selected = useSelectedNode();
 const { getNodeById } = useProjectTree();
 const { setDeepLinkFocus } = useDeepLinkFocus();
@@ -142,13 +144,33 @@ const handleNotificationClick = async (item: RealtimeNotification) => {
     await realtime.markNotificationRead(item.id);
   }
 
-  if (item.data && typeof item.data === "object") {
-    navigateToDeepLink(item.data);
-    if (route.path !== "/") {
-      await navigateTo("/");
-    }
-  }
   open.value = false;
+
+  const data = (item.data || {}) as Record<string, unknown>;
+
+  if (item.type === "mention") {
+    // Open chat panel focused on the right scope/project
+    const scope = data.scope as string | undefined;
+    const projectId = data.projectId as string | undefined;
+    chatPanel.openWithFocus(
+      scope === "project" && projectId
+        ? { scope: "project", projectId }
+        : { scope: "global" }
+    );
+
+    // Also navigate to drawing deeplink if present
+    if (data.deepLink) {
+      navigateToDeepLink(data);
+      if (route.path !== "/") await navigateTo("/");
+    }
+    return;
+  }
+
+  // Other notification types: just navigate to deeplink
+  if (data.deepLink) {
+    navigateToDeepLink(data);
+    if (route.path !== "/") await navigateTo("/");
+  }
 };
 
 const markAllRead = async () => {

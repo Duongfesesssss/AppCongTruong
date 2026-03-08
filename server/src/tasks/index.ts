@@ -245,7 +245,7 @@ router.post(
 
     // Check ownership through project
     const project = await ProjectModel.findById(drawing.projectId);
-    ensureProjectRole(project, req.user!.id, "admin", "Drawing không tồn tại hoặc không có quyền");
+    ensureProjectRole(project, req.user!.id, "technician", "Drawing không tồn tại hoặc không có quyền");
 
     const counter = await CounterModel.findOneAndUpdate(
       { _id: project!._id.toString() },
@@ -488,6 +488,19 @@ router.put(
   })
 );
 
+// Helper: tính tên clone theo pattern "baseName-N"
+const getNextClonePinName = async (sourceTask: { pinName?: string; drawingId: any }, offset = 0) => {
+  if (!sourceTask.pinName) return sourceTask.pinName;
+  // Strip existing -N suffix to get base name
+  const baseName = sourceTask.pinName.replace(/-\d+$/, "");
+  // Count tasks in same drawing that match baseName or baseName-N
+  const existingCount = await TaskModel.countDocuments({
+    drawingId: sourceTask.drawingId,
+    pinName: { $regex: `^${escapeRegExp(baseName)}(-\\d+)?$` }
+  });
+  return `${baseName}-${existingCount + offset}`;
+};
+
 // POST /api/tasks/:id/clone - Nhân bản task (không copy ảnh)
 router.post(
   "/:id/clone",
@@ -497,9 +510,9 @@ router.post(
     const sourceTask = await TaskModel.findById(req.params.id);
     if (!sourceTask) throw errors.notFound("Task không tồn tại");
 
-    // Check permission: admin role required to clone
+    // Check permission: technician or above can clone
     const project = await ProjectModel.findById(sourceTask.projectId);
-    ensureProjectRole(project, req.user!.id, "admin", "Task không tồn tại hoặc không có quyền");
+    ensureProjectRole(project, req.user!.id, "technician", "Task không tồn tại hoặc không có quyền");
 
     const { pinX, pinY } = req.body;
 
@@ -519,7 +532,9 @@ router.post(
     const floorCode = toCode(drawing.parsedMetadata?.floorCode || "NA", 2);
     const pinCode = formatPinCode(project!.code, buildingCode, floorCode, gewerkCode, counter.seq);
 
-    // Clone task fields: pinName, category, status, notes (NOT photos)
+    const clonedPinName = await getNextClonePinName(sourceTask);
+
+    // Clone task fields: pinName (+suffix), category, status, notes (NOT photos)
     const clonedTask = await TaskModel.create({
       projectId: sourceTask.projectId,
       buildingId: sourceTask.buildingId,
@@ -532,11 +547,11 @@ router.post(
       category: sourceTask.category,
       description: sourceTask.description,
       roomName: sourceTask.roomName,
-      pinName: sourceTask.pinName, // Clone user-defined name
+      pinName: clonedPinName,
       gewerk: sourceTask.gewerk,
       tagNames: [...sourceTask.tagNames],
-      notes: [...sourceTask.notes], // Clone notes array
-      pinCode, // New unique code
+      notes: [...sourceTask.notes],
+      pinCode,
       createdBy: req.user!.id
     });
 
@@ -553,9 +568,9 @@ router.post(
     const sourceTask = await TaskModel.findById(req.params.id);
     if (!sourceTask) throw errors.notFound("Task không tồn tại");
 
-    // Check permission: admin role required to clone
+    // Check permission: technician or above can bulk clone
     const project = await ProjectModel.findById(sourceTask.projectId);
-    ensureProjectRole(project, req.user!.id, "admin", "Task không tồn tại hoặc không có quyền");
+    ensureProjectRole(project, req.user!.id, "technician", "Task không tồn tại hoặc không có quyền");
 
     const { count, pinX, pinY } = req.body;
 
@@ -567,6 +582,12 @@ router.post(
     const gewerkCode = toCode(sourceTask.gewerk ?? "NA", 2);
     const buildingCode = toCode(drawing.parsedMetadata?.buildingCode || "NA", 2);
     const floorCode = toCode(drawing.parsedMetadata?.floorCode || "NA", 2);
+
+    // Pre-compute base name and existing count for sequential naming
+    const cloneBaseName = sourceTask.pinName ? sourceTask.pinName.replace(/-\d+$/, "") : undefined;
+    const existingNameCount = cloneBaseName
+      ? await TaskModel.countDocuments({ drawingId: sourceTask.drawingId, pinName: { $regex: `^${escapeRegExp(cloneBaseName)}(-\\d+)?$` } })
+      : 0;
 
     // Generate multiple clones
     const clonedTasks = [];
@@ -593,10 +614,10 @@ router.post(
         category: sourceTask.category,
         description: sourceTask.description,
         roomName: sourceTask.roomName,
-        pinName: sourceTask.pinName, // Clone user-defined name
+        pinName: cloneBaseName ? `${cloneBaseName}-${existingNameCount + i}` : sourceTask.pinName,
         gewerk: sourceTask.gewerk,
         tagNames: [...sourceTask.tagNames],
-        notes: [...sourceTask.notes], // Clone notes array
+        notes: [...sourceTask.notes],
         pinCode, // New unique code
         createdBy: req.user!.id
       });

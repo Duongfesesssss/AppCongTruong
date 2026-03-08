@@ -55,7 +55,7 @@ const taskSchema = new Schema<TaskDocument>(
     },
     notes: { type: [String], default: [] },
     pinCode: { type: String, required: true, unique: true },
-    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true }
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", index: true }
   },
   { timestamps: true }
 );

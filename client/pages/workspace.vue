@@ -220,7 +220,7 @@
       </div>
 
       <!-- Card View (Mobile) -->
-      <div v-else class="divide-y divide-slate-100 lg:hidden">
+      <div v-if="filteredPins.length > 0" class="divide-y divide-slate-100 lg:hidden">
         <div
           v-for="pin in paginatedPins"
           :key="pin._id"
@@ -294,6 +294,7 @@
       :task-data="selectedPin"
       :can-delete-photo="canManageTask(selectedPin)"
       :can-edit-task="canManageTask(selectedPin)"
+      :is-admin="isProjectOwner(selectedPin)"
       @close="selectedPin = null"
       @task-updated="handlePinUpdated"
       @task-deleted="handlePinDeleted"
@@ -475,17 +476,28 @@ const viewPinDetail = (pin: any) => {
   selectedPin.value = pin;
 };
 
+const getProjectForPin = (pin: any) =>
+  userProjects.value.find(p => String(p._id) === String(pin.projectId));
+
+const isProjectOwner = (pin: any) => {
+  const user = auth.user.value;
+  if (!user) return false;
+  const project = getProjectForPin(pin);
+  return project ? String(project.userId) === String(user.id) : false;
+};
+
 const canManageTask = (pin: any) => {
   const user = auth.user.value;
   if (!user) return false;
 
-  // Admin can manage all
-  const project = userProjects.value.find(p => String(p._id) === String(pin.projectId));
+  const project = getProjectForPin(pin);
   if (!project) return false;
+
+  // Project owner luôn có quyền
+  if (String(project.userId) === String(user.id)) return true;
 
   const member = project.members?.find((m: any) => String(m.userId) === String(user.id));
   const role = member?.role || 'viewer';
-
   return role === 'admin' || role === 'technician';
 };
 
@@ -496,10 +508,12 @@ const canDeletePin = (pin: any) => {
   // Creator can delete their own pins
   if (String(pin.createdBy) === String(user.id)) return true;
 
-  // Admin can delete any pin
-  const project = userProjects.value.find(p => String(p._id) === String(pin.projectId));
+  // Project owner có thể xóa mọi pin
+  const project = getProjectForPin(pin);
   if (!project) return false;
+  if (String(project.userId) === String(user.id)) return true;
 
+  // Member admin cũng có thể xóa
   const member = project.members?.find((m: any) => String(m.userId) === String(user.id));
   return member?.role === 'admin';
 };
