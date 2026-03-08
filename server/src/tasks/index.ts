@@ -326,6 +326,7 @@ router.get(
     if (req.query.drawingId) filter.drawingId = req.query.drawingId;
     if (req.query.status) filter.status = req.query.status;
     if (req.query.category) filter.category = req.query.category;
+    if (req.query.createdBy) filter.createdBy = req.query.createdBy;
     if (req.query.tagName) {
       filter.tagNames = normalizeTagName(String(req.query.tagName));
     }
