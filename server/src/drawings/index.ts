@@ -324,7 +324,7 @@ router.post(
     };
 
     const project = await ProjectModel.findById(projectId);
-    ensureProjectRole(project, req.user!.id, "admin", "Project khong ton tai hoac khong co quyen");
+    ensureProjectRole(project, req.user!.id, "technician", "Project khong ton tai hoac khong co quyen");
 
     const preferredDrawingName = normalizeDrawingCode(drawingCodeInput || name || "");
     const autoScan = resolveAutoScan({
@@ -756,7 +756,7 @@ router.patch(
     ensureProjectRole(
       await ProjectModel.findById(drawing.projectId),
       req.user!.id,
-      "admin",
+      "technician",
       "Drawing khong ton tai hoac khong co quyen"
     );
 
@@ -860,7 +860,7 @@ router.post(
     };
 
     const project = await ProjectModel.findById(projectId);
-    ensureProjectRole(project, req.user!.id, "admin", "Project khong ton tai hoac khong co quyen");
+    ensureProjectRole(project, req.user!.id, "technician", "Project khong ton tai hoac khong co quyen");
 
     // Validate IFC file — buffer available for S3/memory storage, path for local/disk storage
     const validationResult = req.file.buffer

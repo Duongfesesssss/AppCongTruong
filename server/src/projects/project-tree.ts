@@ -57,6 +57,7 @@ type FlatTreeNode = {
   projectId: string;
   projectRole: ProjectMemberRole;
   canManageStructure: boolean;
+  canManageDrawings: boolean;
   drawingCode?: string;
   versionIndex?: number;
   metadata: FlatTreeNodeMetadata;
@@ -82,6 +83,7 @@ const createNode = (
   projectId,
   projectRole,
   canManageStructure: projectRole === "admin",
+  canManageDrawings: projectRole === "admin" || projectRole === "technician",
   ...extras,
   metadata: extras.metadata ?? {}
 });

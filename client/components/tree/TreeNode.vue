@@ -214,7 +214,8 @@ const childType = computed(() => {
 });
 
 const canAddChild = computed(() => {
-  return node.value.canManageStructure && node.value.type === "project";
+  // Technicians and admins can upload drawings
+  return node.value.canManageDrawings && node.value.type === "project";
 });
 
 const canReorder = computed(() => {
@@ -226,11 +227,17 @@ const canDuplicate = computed(() => {
 });
 
 const canRename = computed(() => {
-  return !!node.value.canManageStructure && node.value.type !== "task";
+  if (node.value.type === "task") return false;
+  // Members can rename drawings; only admin can rename structural nodes
+  if (node.value.type === "drawing") return node.value.canManageDrawings;
+  return node.value.canManageStructure;
 });
 
 const canDelete = computed(() => {
-  return !!node.value.canManageStructure;
+  // Members can delete drawings/tasks they created (server enforces creator check)
+  if (node.value.type === "drawing" || node.value.type === "task") return node.value.canManageDrawings;
+  // Structural nodes (project, building, floor, discipline) — admin only
+  return node.value.canManageStructure;
 });
 
 const hasMenuActions = computed(() => {

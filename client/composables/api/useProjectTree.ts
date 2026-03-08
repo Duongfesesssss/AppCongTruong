@@ -24,6 +24,7 @@ export type ProjectTreeNode = {
   projectId: string;
   projectRole: ProjectRole;
   canManageStructure: boolean;
+  canManageDrawings: boolean;
   drawingCode?: string;
   versionIndex?: number;
   metadata: ProjectTreeNodeMetadata;
@@ -41,6 +42,7 @@ type LegacyProjectTreeNode = {
   projectId: string;
   projectRole: ProjectRole;
   canManageStructure: boolean;
+  canManageDrawings: boolean;
   drawingCode?: string;
   versionIndex?: number;
   children?: LegacyProjectTreeNode[];
