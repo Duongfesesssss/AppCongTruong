@@ -15,6 +15,7 @@ import { ZoneModel } from "../zones/zone.model";
 import { formatPinCode, sanitizeText, toCode } from "../lib/utils";
 import type { TaskCategory, TaskStatus } from "../lib/constants";
 import { createAndPublishNotifications } from "../notifications/service";
+import { sendTaskStatusEmail } from "../lib/mail";
 import { UserModel } from "../users/user.model";
 
 const router = Router();
@@ -181,6 +182,30 @@ router.post(
                 }
               }))
             );
+
+            // Send email notifications for task status updates
+            // Fetch recipient user details for emails
+            const recipients = await UserModel.find({ _id: { $in: recipientUserIds } }).select("_id name email").lean();
+
+            // Send emails in parallel without blocking the response
+            Promise.all(
+              recipients.map((recipient) =>
+                sendTaskStatusEmail({
+                  recipientEmail: recipient.email,
+                  recipientName: recipient.name || recipient.email,
+                  actorName: req.user!.name || req.user!.email,
+                  taskCode: task.pinCode,
+                  taskName: task.pinName,
+                  oldStatus,
+                  newStatus: task.status,
+                  projectName: project.name,
+                  deepLinkUrl: undefined // Can be enhanced later with full URL
+                })
+              )
+            ).catch((error) => {
+              // Log error but don't fail the request
+              console.error("Failed to send task status emails:", error);
+            });
           }
         }
       }

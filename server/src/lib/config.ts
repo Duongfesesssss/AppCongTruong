@@ -31,6 +31,18 @@ export const config = {
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
     region: process.env.AWS_REGION ?? "ap-southeast-1",
     s3Bucket: process.env.AWS_S3_BUCKET ?? ""
+  },
+
+  // Email configuration (Gmail SMTP)
+  mail: {
+    enabled: process.env.MAIL_ENABLED === "true",
+    host: process.env.MAIL_HOST ?? "smtp.gmail.com",
+    port: toNumber(process.env.MAIL_PORT, 587),
+    secure: process.env.MAIL_SECURE === "true",
+    user: process.env.MAIL_USER ?? "",
+    password: process.env.MAIL_PASSWORD ?? "",
+    fromName: process.env.MAIL_FROM_NAME ?? "AppCongTruong",
+    fromEmail: process.env.MAIL_FROM_EMAIL ?? process.env.MAIL_USER ?? ""
   }
 };
 
