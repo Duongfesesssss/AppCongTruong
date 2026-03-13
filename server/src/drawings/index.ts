@@ -675,6 +675,66 @@ router.get(
       filter.tagNames = normalizeTagName(String(req.query.tagName));
     }
 
+    // Multi-select filters for building/floor/discipline
+    if (req.query.buildingIds) {
+      const buildingIds = Array.isArray(req.query.buildingIds) ? req.query.buildingIds : [req.query.buildingIds];
+      if (buildingIds.length > 0) {
+        filter.buildingId = { $in: buildingIds };
+      }
+    }
+
+    if (req.query.floorIds) {
+      const floorIds = Array.isArray(req.query.floorIds) ? req.query.floorIds : [req.query.floorIds];
+      if (floorIds.length > 0) {
+        filter.floorId = { $in: floorIds };
+      }
+    }
+
+    if (req.query.disciplineIds) {
+      const disciplineIds = Array.isArray(req.query.disciplineIds) ? req.query.disciplineIds : [req.query.disciplineIds];
+      if (disciplineIds.length > 0) {
+        filter.disciplineId = { $in: disciplineIds };
+      }
+    }
+
+    // Filter by parsed metadata codes
+    if (req.query.levelCodes) {
+      const levelCodes = Array.isArray(req.query.levelCodes) ? req.query.levelCodes : [req.query.levelCodes];
+      if (levelCodes.length > 0) {
+        // Normalize and match level codes
+        const normalizedCodes = levelCodes.map((code) => normalizeCodeSegment(String(code)));
+        filter["parsedMetadata.levelCode"] = {
+          $in: normalizedCodes.filter(Boolean)
+        };
+      }
+    }
+
+    if (req.query.disciplineCodes) {
+      const disciplineCodes = Array.isArray(req.query.disciplineCodes) ? req.query.disciplineCodes : [req.query.disciplineCodes];
+      if (disciplineCodes.length > 0) {
+        const normalizedCodes = disciplineCodes.map((code) => normalizeCodeSegment(String(code)));
+        filter["parsedMetadata.disciplineCode"] = {
+          $in: normalizedCodes.filter(Boolean)
+        };
+      }
+    }
+
+    // Filter by phase/stage (if the field exists in parsedMetadata or will be added)
+    if (req.query.phases) {
+      const phases = Array.isArray(req.query.phases) ? req.query.phases : [req.query.phases];
+      if (phases.length > 0) {
+        // Assuming phase might be stored in freeText or a dedicated field
+        filter["parsedMetadata.freeText"] = {
+          $in: phases.map((p) => String(p).trim().toUpperCase())
+        };
+      }
+    }
+
+    // Filter by file type
+    if (req.query.fileType) {
+      filter.fileType = req.query.fileType;
+    }
+
     if (!includeVersions) {
       filter.$or = [{ isLatestVersion: true }, { isLatestVersion: { $exists: false } }];
     }
@@ -760,9 +820,17 @@ router.get(
     const contentType = isIfcFile ? "application/ifc" : drawing.mimeType;
     res.setHeader("Content-Type", contentType);
 
+    // Build standardized filename for download
     const safeName = path.basename(drawing.originalName || drawing.storageKey);
     const isDownload = req.query.download === "1" || req.query.download === "true";
-    res.setHeader("Content-Disposition", `${isDownload ? "attachment" : "inline"}; filename="${safeName}"`);
+
+    // Use standardized filename with drawing code for better organization
+    const downloadFilename = drawing.drawingCode && isDownload
+      ? buildStandardizedDrawingFileName(drawing.drawingCode, drawing.mimeType, safeName)
+      : safeName;
+
+    res.setHeader("Content-Disposition", `${isDownload ? "attachment" : "inline"}; filename="${downloadFilename}"`);
+    res.setHeader("Content-Length", String(drawing.size));
 
     if (config.storageType === "s3") {
       const stream = await getDrawingS3StreamWithFallback(drawing.storageKey);
