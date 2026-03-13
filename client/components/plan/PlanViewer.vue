@@ -188,6 +188,9 @@ const MAX_QUALITY_SCALE = 10;
 const SHARPEN_DEBOUNCE_MS = 220;
 const VIEW_SAFE_MARGIN = 48;
 const WHEEL_ZOOM_REQUIRES_SHIFT = true;
+const PROGRESSIVE_RENDER_ENABLED = true; // Enable progressive rendering for smoother experience
+const LOW_QUALITY_RENDER_DELAY_MS = 50; // Delay before rendering low quality version
+const HIGH_QUALITY_RENDER_DELAY_MS = SHARPEN_DEBOUNCE_MS; // Delay before rendering high quality
 
 const viewportRef = ref<HTMLElement | null>(null);
 const contentRef = ref<HTMLElement | null>(null);
