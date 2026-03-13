@@ -113,5 +113,12 @@ drawingSchema.index({ projectId: 1, sortIndex: 1 });
 drawingSchema.index({ projectId: 1, drawingCode: 1, versionIndex: -1 });
 drawingSchema.index({ projectId: 1, isLatestVersion: 1, sortIndex: 1 });
 drawingSchema.index({ projectId: 1, tagNames: 1 });
+// Additional indexes for multi-layer filtering
+drawingSchema.index({ projectId: 1, buildingId: 1, isLatestVersion: 1 });
+drawingSchema.index({ projectId: 1, floorId: 1, isLatestVersion: 1 });
+drawingSchema.index({ projectId: 1, disciplineId: 1, isLatestVersion: 1 });
+drawingSchema.index({ projectId: 1, fileType: 1, isLatestVersion: 1 });
+drawingSchema.index({ "parsedMetadata.levelCode": 1, projectId: 1 });
+drawingSchema.index({ "parsedMetadata.disciplineCode": 1, projectId: 1 });
 
 export const DrawingModel = mongoose.model<DrawingDocument>("Drawing", drawingSchema);

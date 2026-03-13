@@ -69,6 +69,27 @@ export const drawingIdSchema = z.object({
   })
 });
 
+const parseArrayParam = (value: unknown): string[] | undefined => {
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value.filter((v) => typeof v === "string" && v.trim().length > 0);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    // Handle JSON array format
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.filter((v) => typeof v === "string" && v.trim().length > 0);
+      } catch {
+        // fallback to comma split
+      }
+    }
+    // Handle comma-separated format
+    return trimmed.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  return undefined;
+};
+
 export const listDrawingSchema = z.object({
   query: z.object({
     projectId: objectIdSchema.optional(),
@@ -80,7 +101,18 @@ export const listDrawingSchema = z.object({
         if (typeof value === "string") return value === "1" || value.toLowerCase() === "true";
         return false;
       }, z.boolean())
-      .optional()
+      .optional(),
+    // Multi-select filters
+    buildingIds: z.preprocess(parseArrayParam, z.array(objectIdSchema).max(50).optional()),
+    floorIds: z.preprocess(parseArrayParam, z.array(objectIdSchema).max(50).optional()),
+    disciplineIds: z.preprocess(parseArrayParam, z.array(objectIdSchema).max(50).optional()),
+    // Filter by parsed metadata codes
+    levelCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
+    disciplineCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
+    // Filter by phase/stage (if field exists)
+    phases: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(30).optional()),
+    // Filter by file type
+    fileType: z.enum(["2d", "3d", "hybrid"]).optional()
   })
 });
 
