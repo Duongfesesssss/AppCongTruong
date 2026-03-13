@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { namingFieldTypes } from "./naming-convention.model";
-import { objectIdSchema } from "../lib/validation-schemas";
+import { objectIdSchema } from "../lib/validators";
 
 export const keywordMappingSchema = z.object({
   code: z.string().trim().toUpperCase().min(1).max(50),
