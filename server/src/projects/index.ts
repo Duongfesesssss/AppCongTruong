@@ -8,7 +8,7 @@ import { sanitizeText } from "../lib/utils";
 import { errors } from "../lib/errors";
 import { UserModel } from "../users/user.model";
 import { ProjectModel, type ProjectDocument } from "./project.model";
-import { buildProjectAccessFilter, ensureProjectRole, getProjectRole } from "./project-access";
+import { buildProjectAccessFilter, ensureProjectRole, getProjectRole, getProjectPermissions } from "./project-access";
 import { buildUniqueProjectCode } from "./project-code";
 import {
   addProjectMemberSchema,
@@ -27,13 +27,18 @@ type ProjectDocWithMethods = HydratedDocument<ProjectDocument>;
 
 const toProjectResponse = (project: ProjectDocWithMethods, userId: string) => {
   const role = getProjectRole(project, userId);
+  const permissions = getProjectPermissions(project, userId);
+
   return {
     ...project.toObject(),
     myRole: role,
     permissions: {
+      // Legacy permissions (backward compatible)
       canManageStructure: role === "admin",
       canManageMembers: role === "admin",
-      canProcessPhotos: role === "admin" || role === "technician"
+      canProcessPhotos: role === "admin" || role === "technician",
+      // New permission matrix
+      ...permissions
     }
   };
 };

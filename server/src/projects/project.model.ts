@@ -1,13 +1,37 @@
 import mongoose, { Schema, Types } from "mongoose";
+import type { PermissionKey, ProjectRole } from "../permissions/permission-constants";
 
+// Legacy roles - keeping for backward compatibility
 export const projectMemberRoles = ["admin", "technician"] as const;
 export type ProjectMemberRole = (typeof projectMemberRoles)[number];
 
 export type ProjectMember = {
   userId: Types.ObjectId;
-  role: ProjectMemberRole;
+  role: ProjectMemberRole | ProjectRole; // Support both legacy and new roles
   addedBy?: Types.ObjectId;
   addedAt: Date;
+};
+
+// Permission matrix type
+export type PermissionMatrix = {
+  roles: Record<string, Record<string, boolean>>; // role -> permission -> boolean
+};
+
+// Permission change audit log entry
+export type PermissionChangeLog = {
+  changedBy: Types.ObjectId;
+  changedAt: Date;
+  role?: string;
+  permission?: string;
+  oldValue?: boolean;
+  newValue?: boolean;
+  action: "matrix_updated" | "matrix_reset";
+  changes?: Array<{
+    role: string;
+    permission: string;
+    oldValue: boolean;
+    newValue: boolean;
+  }>;
 };
 
 export type DrawingMetaConfigItem = {
@@ -28,6 +52,8 @@ export type ProjectDocument = {
   sortIndex: number;
   description?: string;
   drawingMetaConfig?: ProjectDrawingMetaConfig;
+  permissionMatrix?: PermissionMatrix;
+  permissionChangeLogs?: PermissionChangeLog[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -35,9 +61,31 @@ export type ProjectDocument = {
 const projectMemberSchema = new Schema<ProjectMember>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    role: { type: String, enum: projectMemberRoles, required: true, default: "technician" },
+    role: { type: String, required: true, default: "technician" }, // Allow any string for new roles
     addedBy: { type: Schema.Types.ObjectId, ref: "User" },
     addedAt: { type: Date, default: Date.now }
+  },
+  { _id: false }
+);
+
+const permissionChangeLogSchema = new Schema<PermissionChangeLog>(
+  {
+    changedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    changedAt: { type: Date, default: Date.now, required: true },
+    role: { type: String },
+    permission: { type: String },
+    oldValue: { type: Boolean },
+    newValue: { type: Boolean },
+    action: { type: String, enum: ["matrix_updated", "matrix_reset"], required: true },
+    changes: [
+      {
+        role: { type: String, required: true },
+        permission: { type: String, required: true },
+        oldValue: { type: Boolean, required: true },
+        newValue: { type: Boolean, required: true },
+        _id: false
+      }
+    ]
   },
   { _id: false }
 );
@@ -53,7 +101,11 @@ const projectSchema = new Schema<ProjectDocument>(
     drawingMetaConfig: {
       buildings: [{ code: { type: String, uppercase: true, trim: true }, name: { type: String, trim: true }, _id: false }],
       levels: [{ code: { type: String, uppercase: true, trim: true }, name: { type: String, trim: true }, _id: false }]
-    }
+    },
+    permissionMatrix: {
+      roles: { type: Schema.Types.Mixed, default: {} }
+    },
+    permissionChangeLogs: { type: [permissionChangeLogSchema], default: [] }
   },
   { timestamps: true }
 );

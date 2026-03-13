@@ -17,6 +17,7 @@ import authRoutes from "./auth";
 import userRoutes from "./users";
 import projectRoutes from "./projects";
 import projectTreeRoutes from "./projects/project-tree";
+import permissionRoutes from "./permissions";
 import buildingRoutes from "./buildings";
 import floorRoutes from "./floors";
 import disciplineRoutes from "./disciplines";
@@ -97,6 +98,7 @@ app.get("/api/health", (_req, res) => sendSuccess(res, { ok: true }));
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/projects", projectRoutes);
+app.use("/api/projects", permissionRoutes); // Permission routes nested under /projects/:id/permissions
 app.use("/api/project-tree", projectTreeRoutes);
 app.use("/api/buildings", buildingRoutes);
 app.use("/api/floors", floorRoutes);
