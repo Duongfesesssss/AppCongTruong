@@ -176,7 +176,8 @@ router.post(
   validate(addProjectMemberSchema),
   asyncHandler(async (req, res) => {
     const { id } = req.params as { id: string };
-    const { email } = req.body as { email: string; role?: "technician" };
+    const { email, role: requestedRole } = req.body as { email: string; role?: string };
+    const assignedRole = requestedRole || "nguoi-quan-sat";
 
     const project = (await ProjectModel.findById(id)) as ProjectDocWithMethods | null;
     ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
@@ -192,7 +193,7 @@ router.post(
 
     const existingMember = project!.members.find((member) => member.userId.toString() === targetId);
     if (existingMember) {
-      existingMember.role = "technician";
+      existingMember.role = assignedRole;
       existingMember.addedBy = new Types.ObjectId(req.user!.id);
       existingMember.addedAt = new Date();
       await project!.save();
@@ -202,14 +203,14 @@ router.post(
           name: targetUser.name,
           email: targetUser.email
         },
-        role: "technician",
+        role: assignedRole,
         created: false
       });
     }
 
     project!.members.push({
       userId: targetUser._id,
-      role: "technician",
+      role: assignedRole,
       addedBy: new Types.ObjectId(req.user!.id),
       addedAt: new Date()
     });
@@ -223,7 +224,7 @@ router.post(
           name: targetUser.name,
           email: targetUser.email
         },
-        role: "technician",
+        role: assignedRole,
         created: true
       },
       {},

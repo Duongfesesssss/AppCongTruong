@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { objectIdSchema } from "../lib/validators";
+import { projectRoles } from "../permissions/permission-constants";
 
 export const createProjectSchema = z.object({
   body: z.object({
@@ -28,7 +29,7 @@ export const addProjectMemberSchema = z.object({
   }),
   body: z.object({
     email: z.string().email("Email khong hop le"),
-    role: z.literal("technician").optional()
+    role: z.enum(projectRoles).optional()
   })
 });
 

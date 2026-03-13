@@ -22,10 +22,8 @@
     <!-- Filter Panel -->
     <DrawingFilterPanel
       v-if="showFilters"
-      :project-id="projectId"
-      :buildings="buildings"
-      :floors="floors"
-      :disciplines="disciplines"
+      :projects="projects"
+      :default-project-id="projectId"
       @filter-change="handleFilterChange"
     />
 
@@ -169,6 +167,7 @@
 
 <script setup lang="ts">
 import DrawingFilterPanel from "./DrawingFilterPanel.vue";
+import { useApi } from "../composables/api/useApi";
 
 type Drawing = {
   _id: string;
@@ -187,9 +186,8 @@ type Drawing = {
 };
 
 type DrawingFilters = {
-  buildingIds: Array<{ label: string; value: string }>;
-  floorIds: Array<{ label: string; value: string }>;
-  disciplineIds: Array<{ label: string; value: string }>;
+  projectId: string;
+  buildingCodes: Array<{ label: string; value: string }>;
   levelCodes: Array<{ label: string; value: string }>;
   disciplineCodes: Array<{ label: string; value: string }>;
   fileType: string;
@@ -197,9 +195,7 @@ type DrawingFilters = {
 
 const props = defineProps<{
   projectId?: string;
-  buildings?: Array<{ _id: string; name: string; code: string }>;
-  floors?: Array<{ _id: string; name: string; code: string; buildingId: string }>;
-  disciplines?: Array<{ _id: string; name: string; code: string; floorId: string }>;
+  projects?: Array<{ id: string; name: string }>;
 }>();
 
 const emit = defineEmits<{
@@ -214,47 +210,32 @@ const error = ref("");
 const downloadingIds = ref(new Set<string>());
 
 const currentFilters = ref<DrawingFilters>({
-  buildingIds: [],
-  floorIds: [],
-  disciplineIds: [],
+  projectId: props.projectId ?? "",
+  buildingCodes: [],
   levelCodes: [],
   disciplineCodes: [],
   fileType: ""
 });
 
 const fetchDrawings = async () => {
-  if (!props.projectId) return;
+  const pid = currentFilters.value.projectId || props.projectId;
+  if (!pid) return;
 
   loading.value = true;
   error.value = "";
 
   try {
-    const params: Record<string, any> = {
-      projectId: props.projectId,
-      includeVersions: false
-    };
+    const qs = new URLSearchParams();
+    qs.set("projectId", pid);
+    qs.set("includeVersions", "false");
 
-    // Add filter parameters
-    if (currentFilters.value.buildingIds.length > 0) {
-      params.buildingIds = currentFilters.value.buildingIds.map((b) => b.value);
-    }
-    if (currentFilters.value.floorIds.length > 0) {
-      params.floorIds = currentFilters.value.floorIds.map((f) => f.value);
-    }
-    if (currentFilters.value.disciplineIds.length > 0) {
-      params.disciplineIds = currentFilters.value.disciplineIds.map((d) => d.value);
-    }
-    if (currentFilters.value.levelCodes.length > 0) {
-      params.levelCodes = currentFilters.value.levelCodes.map((l) => l.value);
-    }
-    if (currentFilters.value.disciplineCodes.length > 0) {
-      params.disciplineCodes = currentFilters.value.disciplineCodes.map((d) => d.value);
-    }
-    if (currentFilters.value.fileType) {
-      params.fileType = currentFilters.value.fileType;
-    }
+    const f = currentFilters.value;
+    (Array.isArray(f.buildingCodes) ? f.buildingCodes : []).forEach((b: { value: string }) => qs.append("buildingCodes", b.value));
+    (Array.isArray(f.levelCodes) ? f.levelCodes : []).forEach((l: { value: string }) => qs.append("levelCodes", l.value));
+    (Array.isArray(f.disciplineCodes) ? f.disciplineCodes : []).forEach((d: { value: string }) => qs.append("disciplineCodes", d.value));
+    if (f.fileType) qs.set("fileType", f.fileType);
 
-    const result = await api.get("/drawings", { params });
+    const result = await api.get<Drawing[]>(`/drawings?${qs.toString()}`);
     drawings.value = result;
   } catch (err: any) {
     error.value = err.message || "Không thể tải danh sách bản vẽ";

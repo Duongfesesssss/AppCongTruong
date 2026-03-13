@@ -72,6 +72,21 @@
         </svg>
         Cài đặt quyền
       </button>
+      <button
+        v-if="currentProjectId"
+        class="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        @click="showDrawingListModal = true"
+      >
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+          />
+        </svg>
+        Lọc bản vẽ
+      </button>
     </div>
 
     <div class="flex-1 overflow-y-auto px-2 py-3">
@@ -163,6 +178,37 @@
       @close="showPermissionSettingsModal = false"
       @updated="handlePermissionSettingsUpdated"
     />
+
+    <!-- Drawing List / Filter Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showDrawingListModal"
+        class="fixed inset-0 z-[9999] flex justify-end"
+        style="background: rgba(0,0,0,0.4)"
+        @click.self="showDrawingListModal = false"
+      >
+        <div class="flex h-full w-full max-w-xl flex-col bg-white shadow-xl">
+          <div class="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <h3 class="text-base font-semibold text-slate-900">Lọc bản vẽ</h3>
+            <button
+              class="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              @click="showDrawingListModal = false"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="flex-1 overflow-y-auto p-4">
+            <DrawingListPanel
+              :project-id="currentProjectId"
+              :projects="allProjects"
+              @view-drawing="handleViewDrawing"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </aside>
 </template>
 
@@ -174,6 +220,7 @@ import { useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import NamingConventionModal from "~/components/naming-convention/NamingConventionModal.vue";
 import PermissionSettingsModal from "~/components/PermissionSettingsModal.vue";
+import DrawingListPanel from "~/components/DrawingListPanel.vue";
 
 const emit = defineEmits<{
   navigate: [];
@@ -196,6 +243,13 @@ const showMembersModal = ref(false);
 const showDrawingConfigModal = ref(false);
 const showNamingConventionModal = ref(false);
 const showPermissionSettingsModal = ref(false);
+const showDrawingListModal = ref(false);
+
+const allProjects = computed(() =>
+  rootIds.value
+    .filter((id) => nodeMap.value.get(id)?.type === "project")
+    .map((id) => ({ id, name: nodeMap.value.get(id)?.name || id }))
+);
 const currentProjectId = computed(() => {
   if (!selected.value) return "";
   if (selected.value.type === "project") return selected.value.id;
@@ -262,6 +316,20 @@ const handleDrawingConfigUpdated = async () => {
 
 const handlePermissionSettingsUpdated = async () => {
   await fetchTree();
+};
+
+const handleViewDrawing = (drawing: { _id: string; name: string; drawingCode: string; versionIndex: number }) => {
+  selected.value = {
+    id: drawing._id,
+    name: drawing.name,
+    type: "drawing",
+    projectId: currentProjectId.value,
+    projectRole: selected.value?.projectRole,
+    drawingCode: drawing.drawingCode,
+    versionIndex: drawing.versionIndex
+  } as SelectedNode;
+  showDrawingListModal.value = false;
+  emit("navigate");
 };
 
 const handleAddChild = (payload: { parentId: string; parentType: string; childType: string }) => {
@@ -380,3 +448,4 @@ const handleCreated = () => {
 
 onMounted(fetchTree);
 </script>
+

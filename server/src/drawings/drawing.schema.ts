@@ -107,6 +107,7 @@ export const listDrawingSchema = z.object({
     floorIds: z.preprocess(parseArrayParam, z.array(objectIdSchema).max(50).optional()),
     disciplineIds: z.preprocess(parseArrayParam, z.array(objectIdSchema).max(50).optional()),
     // Filter by parsed metadata codes
+    buildingCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
     levelCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
     disciplineCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
     // Filter by phase/stage (if field exists)

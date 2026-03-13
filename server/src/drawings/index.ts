@@ -709,6 +709,16 @@ router.get(
       }
     }
 
+    if (req.query.buildingCodes) {
+      const buildingCodes = Array.isArray(req.query.buildingCodes) ? req.query.buildingCodes : [req.query.buildingCodes];
+      if (buildingCodes.length > 0) {
+        const normalizedCodes = buildingCodes.map((code) => normalizeCodeSegment(String(code)));
+        filter["parsedMetadata.buildingCode"] = {
+          $in: normalizedCodes.filter(Boolean)
+        };
+      }
+    }
+
     if (req.query.disciplineCodes) {
       const disciplineCodes = Array.isArray(req.query.disciplineCodes) ? req.query.disciplineCodes : [req.query.disciplineCodes];
       if (disciplineCodes.length > 0) {

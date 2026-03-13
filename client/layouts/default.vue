@@ -58,10 +58,18 @@
 
     <div class="flex">
       <!-- Desktop sidebar -->
-      <div class="hidden lg:block lg:w-[280px] lg:shrink-0">
+      <div
+        class="relative hidden lg:block lg:shrink-0"
+        :style="{ width: sidebarWidth + 'px' }"
+      >
         <div class="sticky top-0 h-screen overflow-y-auto">
           <AppSidebar />
         </div>
+        <!-- Resize handle -->
+        <div
+          class="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-brand-400/40 active:bg-brand-400/60 transition-colors"
+          @mousedown.prevent="startResize"
+        />
       </div>
 
       <!-- Main content -->
@@ -121,6 +129,36 @@ const realtime = useRealtime();
 const { open: chatOpen } = useChatPanel();
 const pinPanel = usePinPanel();
 const sidebarOpen = ref(false);
+
+const SIDEBAR_WIDTH_KEY = "sidebar-width-v1";
+const sidebarWidth = ref(280);
+
+onMounted(() => {
+  const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+  if (saved) {
+    const n = parseInt(saved, 10);
+    if (n >= 200 && n <= 600) sidebarWidth.value = n;
+  }
+});
+
+const startResize = (e: MouseEvent) => {
+  const startX = e.clientX;
+  const startWidth = sidebarWidth.value;
+
+  const onMove = (ev: MouseEvent) => {
+    const next = startWidth + ev.clientX - startX;
+    sidebarWidth.value = Math.min(600, Math.max(200, next));
+  };
+
+  const onUp = () => {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value));
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+  };
+
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+};
 
 // Đóng sidebar khi chuyển route
 const route = useRoute();

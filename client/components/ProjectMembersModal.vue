@@ -40,25 +40,33 @@
           </div>
 
           <div class="border-b border-slate-100 px-4 py-4 sm:px-6">
-            <form class="grid gap-2 sm:grid-cols-[1fr_auto]" @submit.prevent="handleAddMember">
-              <div>
-                <label class="mb-1 block text-xs font-medium text-slate-700">Email kỹ thuật viên</label>
-                <input
-                  v-model="memberEmail"
-                  type="email"
-                  autocomplete="email"
-                  class="h-11 w-full rounded-lg border border-slate-300 px-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 sm:h-10"
-                  placeholder="vd: technician@company.com"
-                  :disabled="adding"
-                />
+            <form class="space-y-2" @submit.prevent="handleAddMember">
+              <div class="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-slate-700">Email thành viên</label>
+                  <input
+                    v-model="memberEmail"
+                    type="email"
+                    autocomplete="email"
+                    class="h-11 w-full rounded-lg border border-slate-300 px-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 sm:h-10"
+                    placeholder="vd: member@company.com"
+                    :disabled="adding"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  class="inline-flex h-11 items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10"
+                  :disabled="!canAddMember"
+                >
+                  {{ adding ? "Đang thêm..." : "Thêm" }}
+                </button>
               </div>
-              <button
-                type="submit"
-                class="inline-flex h-11 items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10"
-                :disabled="!canAddMember"
-              >
-                {{ adding ? "Đang thêm..." : "Thêm thành viên" }}
-              </button>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">Chọn vai trò để cấu hình</label>
+                <select v-model="selectedRole" class="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20" :disabled="adding">
+                  <option v-for="r in roleOptions" :key="r.value" :value="r.value">{{ r.label }}</option>
+                </select>
+              </div>
             </form>
             <p v-if="formError" class="mt-2 text-xs text-rose-600">{{ formError }}</p>
           </div>
@@ -101,9 +109,9 @@
                   <div class="flex items-center gap-2">
                     <span
                       class="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                      :class="member.role === 'admin' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'"
+                      :class="getRoleBadgeClass(member.role)"
                     >
-                      {{ member.role === "admin" ? "Admin" : "Kỹ thuật viên" }}
+                      {{ getRoleLabel(member.role) }}
                     </span>
                     <button
                       v-if="canRemoveMember(member)"
@@ -158,16 +166,51 @@ import { useApi } from "~/composables/api/useApi";
 import { useAuth } from "~/composables/state/useAuth";
 import { useToast } from "~/composables/state/useToast";
 
+type ProjectRole = "admin" | "quan-ly-du-an" | "chu-thau" | "thiet-ke" | "thau-phu" | "tho" | "nguoi-quan-sat";
+
 type ProjectMember = {
   user: {
     id: string;
     name: string;
     email: string;
   };
-  role: "admin" | "technician";
+  role: string;
   isOwner: boolean;
   addedAt?: string;
 };
+
+const roleOptions: { value: ProjectRole; label: string }[] = [
+  { value: "nguoi-quan-sat", label: "Người quan sát" },
+  { value: "tho", label: "Thợ" },
+  { value: "thau-phu", label: "Thầu phụ" },
+  { value: "thiet-ke", label: "Thiết kế" },
+  { value: "chu-thau", label: "Chủ thầu" },
+  { value: "quan-ly-du-an", label: "Quản lý dự án" },
+];
+
+const roleLabels: Record<string, string> = {
+  admin: "Admin",
+  "quan-ly-du-an": "Quản lý dự án",
+  "chu-thau": "Chủ thầu",
+  "thiet-ke": "Thiết kế",
+  "thau-phu": "Thầu phụ",
+  tho: "Thợ",
+  "nguoi-quan-sat": "Người quan sát",
+  technician: "Kỹ thuật viên"
+};
+
+const roleBadgeClasses: Record<string, string> = {
+  admin: "bg-emerald-100 text-emerald-700",
+  "quan-ly-du-an": "bg-blue-100 text-blue-700",
+  "chu-thau": "bg-violet-100 text-violet-700",
+  "thiet-ke": "bg-sky-100 text-sky-700",
+  "thau-phu": "bg-orange-100 text-orange-700",
+  tho: "bg-amber-100 text-amber-700",
+  "nguoi-quan-sat": "bg-slate-100 text-slate-600"
+};
+
+const getRoleLabel = (role: string) => roleLabels[role] || role;
+const getRoleBadgeClass = (role: string) => roleBadgeClasses[role] || "bg-slate-100 text-slate-700";
 
 type ProjectMembersResponse = {
   projectId: string;
@@ -194,6 +237,7 @@ const loading = ref(false);
 const loadError = ref("");
 
 const memberEmail = ref("");
+const selectedRole = ref<ProjectRole>("nguoi-quan-sat");
 const formError = ref("");
 const adding = ref(false);
 
@@ -250,10 +294,10 @@ const handleAddMember = async () => {
   try {
     await api.post(`/projects/${props.projectId}/members`, {
       email,
-      role: "technician"
+      role: selectedRole.value
     });
     memberEmail.value = "";
-    toast.push("Đã thêm kỹ thuật viên vào project", "success");
+    toast.push(`Đã thêm thành viên với vai trò "${getRoleLabel(selectedRole.value)}"`, "success");
     await fetchMembers();
     emit("updated");
   } catch (err) {
@@ -303,6 +347,7 @@ watch(
       formError.value = "";
       loadError.value = "";
       memberEmail.value = "";
+      selectedRole.value = "nguoi-quan-sat";
       cancelRemoveMember();
       return;
     }
