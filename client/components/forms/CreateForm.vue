@@ -96,6 +96,20 @@
           </p>
         </div>
 
+        <!-- Naming Convention auto-fill banner -->
+        <div v-if="namingAutoFilled" class="flex items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-700">
+          <svg class="h-4 w-4 shrink-0 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          </svg>
+          Tự nhận diện từ tên file theo Naming Convention. Kiểm tra lại nếu cần.
+        </div>
+        <div v-if="namingAutoFillError" class="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          <svg class="h-4 w-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {{ namingAutoFillError }}
+        </div>
+
         <!-- Metadata fields: 4 dropdowns + 2 free text -->
         <div v-if="uploadFile" class="grid gap-3 sm:grid-cols-2">
           <div>
@@ -261,6 +275,7 @@ import { useToast } from "~/composables/state/useToast";
 import { useProjectTree } from "~/composables/api/useProjectTree";
 import { autoScanDrawingFile, type DrawingAutoScanResult } from "~/utils/drawing-auto-scan";
 import { DISCIPLINE_OPTIONS, DRAWING_TYPE_OPTIONS } from "~/constants/drawing-meta";
+import type { ValidateFilenameResponse } from "~/types/naming-convention";
 
 export type CreateFormType = "project" | "building" | "floor" | "discipline" | "drawing" | "task";
 
@@ -308,6 +323,8 @@ const drawingMetaForm = reactive({
 const projectBuildingOptions = computed(() => projectDrawingConfig.value.buildings);
 const projectLevelOptions = computed(() => projectDrawingConfig.value.levels);
 const showDrawingConfigInForm = ref(false);
+const namingAutoFilled = ref(false);
+const namingAutoFillError = ref("");
 const generatedDrawingName = computed(() => {
   const parts = [
     selectedProjectCode.value,
@@ -1098,10 +1115,39 @@ const title = computed(() => {
   return titles[props.type];
 });
 
-const handleFileChange = (e: Event) => {
+const handleFileChange = async (e: Event) => {
   const input = e.target as HTMLInputElement;
   if (!input.files || !input.files[0]) return;
   uploadFile.value = input.files[0];
+  namingAutoFilled.value = false;
+  namingAutoFillError.value = "";
+
+  if (!props.parentId) return;
+  try {
+    const result = await api.post<ValidateFilenameResponse>(
+      `/naming-conventions/${props.parentId}/validate`,
+      { filename: input.files[0].name }
+    );
+    if (result?.parsed?.isValid && result.parsed.fields?.length) {
+      const getVal = (type: string) =>
+        result.parsed.fields.find((f) => f.type === type)?.matchedKeyword?.code ||
+        result.parsed.fields.find((f) => f.type === type)?.value ||
+        "";
+      const parsedProjectPrefix = getVal("projectPrefix");
+      if (parsedProjectPrefix) selectedProjectCode.value = parsedProjectPrefix;
+      drawingMetaForm.buildingCode = getVal("building") || drawingMetaForm.buildingCode;
+      drawingMetaForm.levelCode = getVal("level") || drawingMetaForm.levelCode;
+      drawingMetaForm.disciplineCode = getVal("discipline") || drawingMetaForm.disciplineCode;
+      drawingMetaForm.drawingTypeCode = getVal("drawingType") || drawingMetaForm.drawingTypeCode;
+      drawingMetaForm.numberCode = getVal("runningNumber") || drawingMetaForm.numberCode;
+      drawingMetaForm.freeText = getVal("description") || drawingMetaForm.freeText;
+      namingAutoFilled.value = true;
+    } else if (result?.parsed?.errors?.length) {
+      namingAutoFillError.value = result.parsed.errors[0];
+    }
+  } catch {
+    // Silent fail - user can still fill manually
+  }
 };
 
 const handleIfcFileChange = (e: Event) => {
@@ -1147,6 +1193,8 @@ const resetForm = () => {
   drawingMetaForm.numberCode = "";
   drawingMetaForm.freeText = "";
   showDrawingConfigInForm.value = false;
+  namingAutoFilled.value = false;
+  namingAutoFillError.value = "";
 
   errorMsg.value = "";
 };

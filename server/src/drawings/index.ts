@@ -761,7 +761,8 @@ router.get(
     res.setHeader("Content-Type", contentType);
 
     const safeName = path.basename(drawing.originalName || drawing.storageKey);
-    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+    const isDownload = req.query.download === "1" || req.query.download === "true";
+    res.setHeader("Content-Disposition", `${isDownload ? "attachment" : "inline"}; filename="${safeName}"`);
 
     if (config.storageType === "s3") {
       const stream = await getDrawingS3StreamWithFallback(drawing.storageKey);

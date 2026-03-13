@@ -34,6 +34,18 @@
             </select>
           </div>
           <div class="flex items-center gap-1.5 sm:gap-2">
+            <!-- Nút tải PDF bản vẽ -->
+            <button
+              v-if="(drawing as any)?.fileType !== '3d'"
+              class="flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+              :disabled="downloadingPdf || loading"
+              @click="downloadDrawingPdf"
+            >
+              <svg class="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              {{ downloadingPdf ? "Đang tải..." : "Tải PDF" }}
+            </button>
             <!-- Nút tải tất cả ảnh trong bản vẽ -->
             <button
               class="flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
@@ -268,6 +280,7 @@ const compareBlendMode = ref<"difference" | "multiply" | "normal">("difference")
 const compareOpacityPercent = ref(55);
 const selectedTask = ref<any>(null);
 const downloadingDrawingImages = ref(false);
+const downloadingPdf = ref(false);
 const pendingTaskSelectionId = ref<string>("");
 
 const loading = ref(false);
@@ -509,6 +522,46 @@ const downloadDrawingImages = async () => {
     toast.push((err as Error).message || "Lỗi khi tải ảnh", "error");
   } finally {
     downloadingDrawingImages.value = false;
+  }
+};
+
+const downloadDrawingPdf = async () => {
+  if (!activeDrawingId.value) {
+    toast.push("Vui lòng chọn bản vẽ", "info");
+    return;
+  }
+  downloadingPdf.value = true;
+  try {
+    const baseUrl = config.public.apiBase.startsWith("http")
+      ? config.public.apiBase
+      : `${window.location.origin}${config.public.apiBase}`;
+
+    const url = new URL(`${baseUrl}/drawings/${activeDrawingId.value}/file`);
+    url.searchParams.set("download", "1");
+    if (token.value) url.searchParams.set("token", token.value);
+
+    const response = await fetch(url.toString(), { credentials: "include" });
+    if (!response.ok) throw new Error("Không thể tải file bản vẽ");
+
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const nameMatch = disposition.match(/filename="?([^"]+)"?/);
+    const fileName = nameMatch?.[1] || `${drawing.value?.name || "banve"}.pdf`;
+
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
+
+    toast.push("Đã tải xuống bản vẽ PDF", "success");
+  } catch (err) {
+    toast.push((err as Error).message || "Lỗi khi tải PDF", "error");
+  } finally {
+    downloadingPdf.value = false;
   }
 };
 

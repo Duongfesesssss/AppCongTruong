@@ -32,6 +32,7 @@ import notificationRoutes from "./notifications";
 import chatRoutes from "./chats";
 import cmsRoutes from "./cms";
 import namingConventionRoutes from "./naming-conventions";
+import keywordLibraryRoutes, { seedKeywordLibraryIfEmpty } from "./keyword-library";
 import { seedAdminUser } from "./auth/seed-admin";
 import { initRealtimeServer } from "./realtime/hub";
 import { initMailTransporter } from "./lib/mail";
@@ -112,6 +113,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/cms", cmsRoutes);
 app.use("/api/naming-conventions", namingConventionRoutes);
+app.use("/api/keyword-library", keywordLibraryRoutes);
 
 app.use((req, res) => {
   sendError(res, errors.notFound(`Khong tim thay ${req.path}`));
@@ -123,6 +125,7 @@ const start = async () => {
   try {
     await connectDb();
     await seedAdminUser();
+    await seedKeywordLibraryIfEmpty();
     initRealtimeServer(httpServer);
     initMailTransporter();
     httpServer.listen(config.port, () => {
