@@ -12,6 +12,7 @@ import { buildProjectAccessFilter, ensureProjectRole, canDeleteResource } from "
 import { createDrawingSchema, drawingIdSchema, listDrawingSchema } from "./drawing.schema";
 import { DrawingModel } from "./drawing.model";
 import { parseDrawingFilename, parseDrawingMetadataFromText } from "./filename-parser";
+import { parseFilenameWithProjectConvention, extractMetadataFromParsed } from "./naming-convention-helper";
 import { createUploader, handleFileUpload } from "../lib/uploads";
 import { config } from "../lib/config";
 import { uploadLimiter } from "../middlewares/rate-limit";
@@ -255,31 +256,46 @@ const buildStandardizedDrawingFileName = (drawingCode: string, mimeType: string,
   return `${safeCode}${normalizedExt || ".bin"}`;
 };
 
-const resolveAutoScan = ({
+const resolveAutoScan = async ({
   originalName,
   preferredName,
-  ocrText
+  ocrText,
+  projectId
 }: {
   originalName: string;
   preferredName?: string;
   ocrText?: string;
+  projectId: string;
 }) => {
+  // Try naming convention first (new approach)
+  const flexibleParsed = await parseFilenameWithProjectConvention(originalName, projectId);
+  if (flexibleParsed && flexibleParsed.isValid) {
+    const metadata = extractMetadataFromParsed(flexibleParsed);
+    return {
+      parsed: null, // Legacy parsed format not used
+      flexibleParsed,
+      metadata,
+      source: "naming-convention" as const
+    };
+  }
+
+  // Fallback to legacy parser
   const parsedFromPreferredName = preferredName ? parseDrawingFilename(preferredName) : null;
   if (parsedFromPreferredName) {
-    return { parsed: parsedFromPreferredName, source: "manual" as const };
+    return { parsed: parsedFromPreferredName, flexibleParsed: null, metadata: null, source: "manual" as const };
   }
 
   const parsedFromFilename = parseDrawingFilename(originalName);
   if (parsedFromFilename) {
-    return { parsed: parsedFromFilename, source: "filename" as const };
+    return { parsed: parsedFromFilename, flexibleParsed: null, metadata: null, source: "filename" as const };
   }
 
   const parsedFromOcr = ocrText ? parseDrawingMetadataFromText(ocrText) : null;
   if (parsedFromOcr) {
-    return { parsed: parsedFromOcr, source: "ocr" as const };
+    return { parsed: parsedFromOcr, flexibleParsed: null, metadata: null, source: "ocr" as const };
   }
 
-  return { parsed: null, source: "none" as const };
+  return { parsed: null, flexibleParsed, metadata: null, source: "none" as const };
 };
 
 router.post(
@@ -327,12 +343,15 @@ router.post(
     ensureProjectRole(project, req.user!.id, "technician", "Project khong ton tai hoac khong co quyen");
 
     const preferredDrawingName = normalizeDrawingCode(drawingCodeInput || name || "");
-    const autoScan = resolveAutoScan({
+    const autoScan = await resolveAutoScan({
       originalName: req.file.originalname,
       preferredName: preferredDrawingName || undefined,
-      ocrText
+      ocrText,
+      projectId: project!._id.toString()
     });
     const parsed = autoScan.parsed;
+    const flexibleParsed = autoScan.flexibleParsed;
+    const namingMetadata = autoScan.metadata;
 
     let resolvedBuildingId = buildingId;
     let resolvedFloorId = floorId;
@@ -369,32 +388,41 @@ router.post(
       return disciplines.find((item) => isEquivalentCode(item.code, normalizedCode)) || null;
     };
 
-    if (!resolvedBuildingId && parsed?.buildingCode) {
-      const matchedBuilding = await findBuildingByParsedCode(parsed.buildingCode);
-      if (matchedBuilding?._id) {
-        resolvedBuildingId = matchedBuilding._id.toString();
-      }
-    }
-
-    if (!resolvedFloorId && parsed?.floorCode) {
-      const matchedFloor = await findFloorByParsedCode(parsed.floorCode, resolvedBuildingId);
-      if (matchedFloor?._id) {
-        resolvedFloorId = matchedFloor._id.toString();
-        if (!resolvedBuildingId && matchedFloor.buildingId) {
-          resolvedBuildingId = matchedFloor.buildingId.toString();
+    if (!resolvedBuildingId && (parsed?.buildingCode || namingMetadata?.buildingCode)) {
+      const code = namingMetadata?.buildingCode || parsed?.buildingCode;
+      if (code) {
+        const matchedBuilding = await findBuildingByParsedCode(code);
+        if (matchedBuilding?._id) {
+          resolvedBuildingId = matchedBuilding._id.toString();
         }
       }
     }
 
-    if (!resolvedDisciplineId && parsed?.disciplineCode) {
-      const matchedDiscipline = await findDisciplineByParsedCode(parsed.disciplineCode, resolvedFloorId);
-      if (matchedDiscipline?._id) {
-        resolvedDisciplineId = matchedDiscipline._id.toString();
-        if (!resolvedFloorId && matchedDiscipline.floorId) {
-          resolvedFloorId = matchedDiscipline.floorId.toString();
+    if (!resolvedFloorId && (parsed?.floorCode || namingMetadata?.levelCode)) {
+      const code = namingMetadata?.levelCode || parsed?.floorCode;
+      if (code) {
+        const matchedFloor = await findFloorByParsedCode(code, resolvedBuildingId);
+        if (matchedFloor?._id) {
+          resolvedFloorId = matchedFloor._id.toString();
+          if (!resolvedBuildingId && matchedFloor.buildingId) {
+            resolvedBuildingId = matchedFloor.buildingId.toString();
+          }
         }
-        if (!resolvedBuildingId && matchedDiscipline.buildingId) {
-          resolvedBuildingId = matchedDiscipline.buildingId.toString();
+      }
+    }
+
+    if (!resolvedDisciplineId && (parsed?.disciplineCode || namingMetadata?.disciplineCode)) {
+      const code = namingMetadata?.disciplineCode || parsed?.disciplineCode;
+      if (code) {
+        const matchedDiscipline = await findDisciplineByParsedCode(code, resolvedFloorId);
+        if (matchedDiscipline?._id) {
+          resolvedDisciplineId = matchedDiscipline._id.toString();
+          if (!resolvedFloorId && matchedDiscipline.floorId) {
+            resolvedFloorId = matchedDiscipline.floorId.toString();
+          }
+          if (!resolvedBuildingId && matchedDiscipline.buildingId) {
+            resolvedBuildingId = matchedDiscipline.buildingId.toString();
+          }
         }
       }
     }
@@ -435,40 +463,49 @@ router.post(
       throw errors.validation("Bo mon khong thuoc toa nha da chon");
     }
 
-    if (!building && parsed?.buildingCode) {
-      const sortIndex = await getNextSortIndex(BuildingModel, { projectId: project!._id });
-      building = await BuildingModel.create({
-        projectId: project!._id,
-        name: sanitizeText(parsed.buildingCode),
-        code: normalizeCodeSegment(parsed.buildingCode),
-        sortIndex
-      });
-      resolvedBuildingId = building._id.toString();
+    if (!building && (parsed?.buildingCode || namingMetadata?.buildingCode)) {
+      const code = namingMetadata?.buildingCode || parsed?.buildingCode;
+      if (code) {
+        const sortIndex = await getNextSortIndex(BuildingModel, { projectId: project!._id });
+        building = await BuildingModel.create({
+          projectId: project!._id,
+          name: sanitizeText(code),
+          code: normalizeCodeSegment(code),
+          sortIndex
+        });
+        resolvedBuildingId = building._id.toString();
+      }
     }
 
-    if (!floor && parsed?.floorCode && building) {
-      const sortIndex = await getNextSortIndex(FloorModel, { buildingId: building._id });
-      floor = await FloorModel.create({
-        projectId: project!._id,
-        buildingId: building._id,
-        name: sanitizeText(parsed.floorCode),
-        code: normalizeCodeSegment(parsed.floorCode),
-        sortIndex
-      });
-      resolvedFloorId = floor._id.toString();
+    if (!floor && (parsed?.floorCode || namingMetadata?.levelCode) && building) {
+      const code = namingMetadata?.levelCode || parsed?.floorCode;
+      if (code) {
+        const sortIndex = await getNextSortIndex(FloorModel, { buildingId: building._id });
+        floor = await FloorModel.create({
+          projectId: project!._id,
+          buildingId: building._id,
+          name: sanitizeText(code),
+          code: normalizeCodeSegment(code),
+          sortIndex
+        });
+        resolvedFloorId = floor._id.toString();
+      }
     }
 
-    if (!discipline && parsed?.disciplineCode && floor && building) {
-      const sortIndex = await getNextSortIndex(DisciplineModel, { floorId: floor._id });
-      discipline = await DisciplineModel.create({
-        projectId: project!._id,
-        buildingId: building._id,
-        floorId: floor._id,
-        name: sanitizeText(parsed.disciplineCode),
-        code: normalizeCodeSegment(parsed.disciplineCode),
-        sortIndex
-      });
-      resolvedDisciplineId = discipline._id.toString();
+    if (!discipline && (parsed?.disciplineCode || namingMetadata?.disciplineCode) && floor && building) {
+      const code = namingMetadata?.disciplineCode || parsed?.disciplineCode;
+      if (code) {
+        const sortIndex = await getNextSortIndex(DisciplineModel, { floorId: floor._id });
+        discipline = await DisciplineModel.create({
+          projectId: project!._id,
+          buildingId: building._id,
+          floorId: floor._id,
+          name: sanitizeText(code),
+          code: normalizeCodeSegment(code),
+          sortIndex
+        });
+        resolvedDisciplineId = discipline._id.toString();
+      }
     }
 
     // Floor and discipline are optional in the new metadata-driven system
@@ -580,7 +617,7 @@ router.post(
         ...drawing.toObject(),
         autoScan: {
           source: autoScan.source,
-          matched: !!parsed,
+          matched: !!parsed || (flexibleParsed?.isValid ?? false),
           suggestedName: parsed?.suggestedName,
           parsedMetadata: parsed
             ? {
@@ -591,6 +628,22 @@ router.post(
                 buildingPartCode: parsed.buildingPartCode,
                 floorCode: parsed.floorCode,
                 fileTypeCode: parsed.fileTypeCode
+              }
+            : namingMetadata
+              ? {
+                  buildingCode: namingMetadata.buildingCode,
+                  levelCode: namingMetadata.levelCode,
+                  disciplineCode: namingMetadata.disciplineCode,
+                  drawingTypeCode: namingMetadata.drawingTypeCode,
+                  projectCode: namingMetadata.projectPrefix
+                }
+              : undefined,
+          namingConvention: flexibleParsed
+            ? {
+                isValid: flexibleParsed.isValid,
+                errors: flexibleParsed.errors,
+                warnings: flexibleParsed.warnings,
+                fields: flexibleParsed.fields
               }
             : undefined
         }

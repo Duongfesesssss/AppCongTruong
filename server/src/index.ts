@@ -31,6 +31,7 @@ import realtimeRoutes from "./realtime";
 import notificationRoutes from "./notifications";
 import chatRoutes from "./chats";
 import cmsRoutes from "./cms";
+import namingConventionRoutes from "./naming-conventions";
 import { seedAdminUser } from "./auth/seed-admin";
 import { initRealtimeServer } from "./realtime/hub";
 import { initMailTransporter } from "./lib/mail";
@@ -110,6 +111,7 @@ app.use("/api/realtime", realtimeRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/cms", cmsRoutes);
+app.use("/api/naming-conventions", namingConventionRoutes);
 
 app.use((req, res) => {
   sendError(res, errors.notFound(`Khong tim thay ${req.path}`));
