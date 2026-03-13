@@ -176,8 +176,11 @@ router.post(
   validate(addProjectMemberSchema),
   asyncHandler(async (req, res) => {
     const { id } = req.params as { id: string };
-    const { email, role: requestedRole } = req.body as { email: string; role?: string };
-    const assignedRole = requestedRole || "nguoi-quan-sat";
+    const { email, role: requestedRole } = req.body as {
+      email: string;
+      role?: ProjectDocument["members"][number]["role"];
+    };
+    const assignedRole: ProjectDocument["members"][number]["role"] = requestedRole ?? "nguoi-quan-sat";
 
     const project = (await ProjectModel.findById(id)) as ProjectDocWithMethods | null;
     ensureProjectRole(project, req.user!.id, "admin", projectNotFoundMessage);
