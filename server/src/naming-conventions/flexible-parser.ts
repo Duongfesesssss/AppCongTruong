@@ -89,11 +89,18 @@ export const parseFilenameWithConvention = (
     };
   }
 
-  // Kiểm tra số lượng segment
+  // Kiểm tra số lượng segment — phải khớp đúng với số field đã định nghĩa
+  // (trường description là ngoại lệ: nó gom hết segment còn lại nên không cần đếm thêm)
+  const hasDescriptionField = enabledFields.some((f) => f.type === "description");
   const requiredFieldCount = enabledFields.filter((f) => f.required).length;
-  if (segments.length < requiredFieldCount) {
+  if (!hasDescriptionField && segments.length !== enabledFields.length) {
     errors.push(
-      `File thiếu trường. Cần tối thiểu ${requiredFieldCount} trường, nhưng chỉ có ${segments.length} trường`
+      `Tên file có ${segments.length} phần nhưng quy tắc định nghĩa ${enabledFields.length} trường. Phải đặt tên đúng cấu trúc.`
+    );
+    return { rawName: filename, fields: [], isValid: false, errors, warnings };
+  } else if (segments.length < requiredFieldCount) {
+    errors.push(
+      `File thiếu trường bắt buộc. Cần tối thiểu ${requiredFieldCount} trường, nhưng chỉ có ${segments.length} trường.`
     );
   }
 
@@ -113,27 +120,22 @@ export const parseFilenameWithConvention = (
     const segmentValue = segments[segmentIndex];
 
     // Parse theo type
-    if (field.type === "projectPrefix") {
-      // Project prefix: accept bất kỳ giá trị nào
+    if (field.type === "project") {
+      // Project code: accept bất kỳ giá trị nào
       fields.push({
         type: field.type,
         value: segmentValue
       });
       segmentIndex++;
     } else if (field.type === "runningNumber") {
-      // Running number: phải là số
-      if (isValidRunningNumber(segmentValue)) {
-        fields.push({
-          type: field.type,
-          value: segmentValue
-        });
-        segmentIndex++;
-      } else if (field.required) {
+      // Running number: luôn consume segment, chỉ warning nếu format không đúng
+      fields.push({ type: field.type, value: segmentValue });
+      if (!isValidRunningNumber(segmentValue) && field.required) {
         errors.push(`Running number không hợp lệ: "${segmentValue}" (vị trí ${field.order + 1})`);
-        segmentIndex++;
-      } else {
-        warnings.push(`Running number không hợp lệ: "${segmentValue}", bỏ qua field này`);
+      } else if (!isValidRunningNumber(segmentValue)) {
+        warnings.push(`Running number không hợp lệ: "${segmentValue}"`);
       }
+      segmentIndex++;
     } else if (field.type === "description") {
       // Description: lấy tất cả segments còn lại
       const remainingSegments = segments.slice(segmentIndex);
@@ -143,41 +145,34 @@ export const parseFilenameWithConvention = (
       });
       segmentIndex = segments.length;
     } else {
-      // Các field khác: building, level, discipline, drawingType
-      // Cần match với keywords
+      // Các field khác: building, level, discipline, content_type...
+      // Luôn consume segment — keyword matching chỉ để làm giàu metadata
       if (field.keywords.length > 0) {
         const matched = matchKeyword(segmentValue, field.keywords);
         if (matched) {
-          fields.push({
-            type: field.type,
-            value: segmentValue,
-            matchedKeyword: matched
-          });
-          segmentIndex++;
-        } else if (field.required) {
-          errors.push(
-            `Trường "${field.type}" không khớp với keyword nào. Giá trị: "${segmentValue}" (vị trí ${field.order + 1})`
-          );
-          segmentIndex++;
+          fields.push({ type: field.type, value: segmentValue, matchedKeyword: matched });
         } else {
-          warnings.push(
-            `Trường "${field.type}" không khớp với keyword: "${segmentValue}", bỏ qua field này`
-          );
+          // Không match keyword nhưng vẫn accept giá trị thô
+          fields.push({ type: field.type, value: segmentValue });
+          if (field.required) {
+            errors.push(
+              `Trường "${field.label || field.type}" không khớp với keyword nào. Giá trị: "${segmentValue}" (vị trí ${field.order + 1})`
+            );
+          }
         }
       } else {
-        // Nếu không có keywords, accept bất kỳ giá trị nào
-        fields.push({
-          type: field.type,
-          value: segmentValue
-        });
-        segmentIndex++;
+        // Không có keywords → accept bất kỳ giá trị nào
+        fields.push({ type: field.type, value: segmentValue });
       }
+      segmentIndex++; // Luôn consume 1 segment cho mọi field (trừ description)
     }
   }
 
-  // Kiểm tra xem có segments thừa không
+  // Kiểm tra xem có segments thừa không → vi phạm quy tắc
   if (segmentIndex < segments.length) {
-    warnings.push(`File có ${segments.length - segmentIndex} trường thừa: ${segments.slice(segmentIndex).join(", ")}`);
+    errors.push(
+      `Tên file có ${segments.length} phần nhưng quy tắc chỉ định nghĩa ${enabledFields.length} trường. Thừa: "${segments.slice(segmentIndex).join(convention.separator)}"`
+    );
   }
 
   return {
@@ -202,30 +197,14 @@ export const generateFormatSuggestion = (convention: NamingConventionDocument): 
     const suffix = field.required ? "" : "]";
 
     let placeholder = "";
-    switch (field.type) {
-      case "projectPrefix":
-        placeholder = "ProjectCode";
-        break;
-      case "building":
-        placeholder = field.keywords.length > 0 ? field.keywords[0].code : "BuildingCode";
-        break;
-      case "level":
-        placeholder = field.keywords.length > 0 ? field.keywords[0].code : "LevelCode";
-        break;
-      case "discipline":
-        placeholder = field.keywords.length > 0 ? field.keywords[0].code : "DisciplineCode";
-        break;
-      case "drawingType":
-        placeholder = field.keywords.length > 0 ? field.keywords[0].code : "TypeCode";
-        break;
-      case "runningNumber":
-        placeholder = "001";
-        break;
-      case "description":
-        placeholder = "Description";
-        break;
-      default:
-        placeholder = field.type;
+    if (field.type === "runningNumber") {
+      placeholder = "001";
+    } else if (field.type === "description") {
+      placeholder = "Description";
+    } else if (field.type === "project") {
+      placeholder = "ProjectCode";
+    } else {
+      placeholder = field.keywords.length > 0 ? field.keywords[0].code : field.label || field.type;
     }
 
     return `${prefix}${placeholder}${suffix}`;

@@ -74,122 +74,87 @@
 
         <!-- 2D PDF Upload -->
         <template v-else>
-        <div>
-          <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">File PDF <span class="text-rose-400">*</span></label>
-          <input type="file" class="input" accept="application/pdf" @change="handleFileChange" :required="drawingMode === '2d'" />
-        </div>
+          <!-- Convention already set up: multi-file UI -->
+          <template v-if="hasNamingConvention">
+            <!-- Convention badge + expand + reset -->
+            <div class="rounded-lg border border-brand-200 bg-brand-50">
+              <div class="flex items-center justify-between px-3 py-2">
+                <button type="button" class="flex items-center gap-2 text-xs text-brand-700 hover:text-brand-900" @click="showConventionDetail = !showConventionDetail">
+                  <svg class="h-4 w-4 shrink-0 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7 7h10M7 12h5M7 17h5" />
+                  </svg>
+                  <span class="font-medium">Đã thiết lập quy tắc đặt tên</span>
+                  <svg class="h-3.5 w-3.5 transition-transform" :class="showConventionDetail ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                <button type="button" class="text-xs text-brand-600 hover:underline" @click="onResetNamingConvention">
+                  Chỉnh sửa
+                </button>
+              </div>
+              <!-- Convention detail panel -->
+              <div v-if="showConventionDetail && savedConvention" class="border-t border-brand-100 px-3 py-2.5 space-y-1.5">
+                <p v-if="savedConvention.exampleFilename" class="break-all font-mono text-xs text-brand-800 font-semibold">
+                  {{ savedConvention.exampleFilename }}
+                </p>
+                <div class="flex flex-wrap items-center gap-1">
+                  <template v-for="(f, i) in savedConvention.fields.filter(f => f)" :key="i">
+                    <span class="rounded bg-brand-100 px-1.5 py-0.5 text-xs font-medium text-brand-700">
+                      {{ f.label || f.type }}
+                    </span>
+                    <span v-if="i < savedConvention.fields.length - 1" class="text-xs text-slate-400 font-mono">{{ savedConvention.separator }}</span>
+                  </template>
+                </div>
+              </div>
+            </div>
 
-        <!-- Generated name preview -->
-        <div
-          v-if="generatedDrawingName || uploadFile"
-          class="rounded-lg border px-3 py-2"
-          :class="generatedDrawingName ? 'border-brand-200 bg-brand-50' : 'border-slate-200 bg-slate-50'"
-        >
-          <p class="text-[11px] font-semibold uppercase tracking-wide" :class="generatedDrawingName ? 'text-brand-700' : 'text-slate-500'">
-            Tên bản vẽ tự sinh
-          </p>
-          <p v-if="generatedDrawingName" class="mt-0.5 break-all font-mono text-sm font-semibold text-brand-900">
-            {{ generatedDrawingName }}
-          </p>
-          <p v-else class="mt-0.5 text-xs text-slate-400">
-            Chọn ít nhất một trường bên dưới để sinh tên tự động.
-          </p>
-        </div>
+            <!-- Multi-file input -->
+            <div>
+              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">File PDF <span class="text-rose-400">*</span></label>
+              <input ref="multiFileInputRef" type="file" class="input" accept="application/pdf" multiple @change="handleMultiFileChange" />
+              <p class="mt-1 text-[11px] text-slate-500">Chọn một hoặc nhiều file PDF. Hệ thống sẽ kiểm tra tên theo quy tắc.</p>
+            </div>
 
-        <!-- Naming Convention auto-fill banner -->
-        <div v-if="namingAutoFilled" class="flex items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-700">
-          <svg class="h-4 w-4 shrink-0 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-          </svg>
-          Tự nhận diện từ tên file theo Naming Convention. Kiểm tra lại nếu cần.
-        </div>
-        <div v-if="namingAutoFillError" class="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-          <svg class="h-4 w-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          {{ namingAutoFillError }}
-        </div>
-
-        <!-- Metadata fields: 4 dropdowns + 2 free text -->
-        <div v-if="uploadFile" class="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tòa nhà</label>
-            <select v-model="drawingMetaForm.buildingCode" class="input">
-              <option value="">Không chọn</option>
-              <option
-                v-for="b in projectBuildingOptions"
-                :key="b.code"
-                :value="b.code"
+            <!-- File list with per-file validation status -->
+            <div v-if="multiFiles.length" class="space-y-2">
+              <div
+                v-for="(item, i) in multiFiles"
+                :key="i"
+                class="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs"
+                :class="item.status === 'valid' ? 'border-emerald-200 bg-emerald-50' : item.status === 'invalid' ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'"
               >
-                {{ b.code }}{{ b.name ? ` – ${b.name}` : "" }}
-              </option>
-            </select>
-            <p v-if="!projectBuildingOptions.length" class="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
-              Chưa khai báo tòa nhà.
-              <button type="button" class="font-medium text-brand-500 hover:text-brand-700 hover:underline" @click="showDrawingConfigInForm = true">Khai báo ngay →</button>
-            </p>
-          </div>
+                <span v-if="item.status === 'validating'" class="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                <svg v-else-if="item.status === 'valid'" class="h-4 w-4 shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+                <svg v-else class="h-4 w-4 shrink-0 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                <div class="min-w-0 flex-1">
+                  <p class="truncate font-medium" :class="item.status === 'valid' ? 'text-emerald-800' : item.status === 'invalid' ? 'text-rose-800' : 'text-slate-700'">
+                    {{ item.name }}
+                  </p>
+                  <p v-if="item.status === 'valid'" class="font-mono text-[11px] text-emerald-600">{{ item.drawingCode }}</p>
+                  <p v-else-if="item.status === 'invalid'" class="text-[11px] text-rose-600">{{ item.error }}</p>
+                  <p v-else class="text-[11px] text-slate-500">Đang kiểm tra...</p>
+                </div>
+                <button type="button" class="ml-1 shrink-0 text-slate-400 hover:text-slate-600" @click="removeMultiFile(i)">
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </template>
 
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Tầng</label>
-            <select v-model="drawingMetaForm.levelCode" class="input">
-              <option value="">Không chọn</option>
-              <option
-                v-for="l in projectLevelOptions"
-                :key="l.code"
-                :value="l.code"
-              >
-                {{ l.code }}{{ l.name ? ` – ${l.name}` : "" }}
-              </option>
-            </select>
-            <p v-if="!projectLevelOptions.length" class="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
-              Chưa khai báo tầng.
-              <button type="button" class="font-medium text-brand-500 hover:text-brand-700 hover:underline" @click="showDrawingConfigInForm = true">Khai báo ngay →</button>
-            </p>
-          </div>
-
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Bộ môn</label>
-            <select v-model="drawingMetaForm.disciplineCode" class="input">
-              <option value="">Không chọn</option>
-              <option v-for="d in DISCIPLINE_OPTIONS" :key="d.code" :value="d.code">
-                {{ d.code }} – {{ d.label }}
-              </option>
-            </select>
-          </div>
-
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Loại bản vẽ</label>
-            <select v-model="drawingMetaForm.drawingTypeCode" class="input">
-              <option value="">Không chọn</option>
-              <option v-for="t in DRAWING_TYPE_OPTIONS" :key="t.code" :value="t.code">
-                {{ t.code }} – {{ t.label }}
-              </option>
-            </select>
-          </div>
-
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Số bản vẽ</label>
-            <input
-              v-model="drawingMetaForm.numberCode"
-              type="text"
-              class="input"
-              placeholder="VD: 0045, 001"
-              maxlength="20"
-            />
-          </div>
-
-          <div>
-            <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Mô tả tự do</label>
-            <input
-              v-model="drawingMetaForm.freeText"
-              type="text"
-              class="input"
-              placeholder="VD: Verteiler, Grundriss-Nord"
-              maxlength="60"
-            />
-          </div>
-        </div>
+          <!-- No convention yet: single file → triggers setup modal -->
+          <template v-else>
+            <div>
+              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">File PDF <span class="text-rose-400">*</span></label>
+              <input type="file" class="input" accept="application/pdf" @change="handleFileChange" :required="drawingMode === '2d'" />
+              <p class="mt-1 text-[11px] text-slate-500">Lần đầu tải lên sẽ yêu cầu thiết lập quy tắc đặt tên.</p>
+            </div>
+          </template>
         </template><!-- end 2D -->
       </template>
 
@@ -253,7 +218,11 @@
           class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
           :disabled="submitting || (type === 'drawing' && !canSubmitDrawing)"
         >
-          {{ submitting ? "Đang tạo..." : "Tạo mới" }}
+          <template v-if="submitting">Đang tải lên...</template>
+          <template v-else-if="type === 'drawing' && hasNamingConvention && multiFiles.filter(f => f.status === 'valid').length > 1">
+            Tải lên {{ multiFiles.filter(f => f.status === 'valid').length }} bản vẽ
+          </template>
+          <template v-else>Tạo mới</template>
         </button>
       </div>
     </form>
@@ -267,6 +236,18 @@
     @close="showDrawingConfigInForm = false"
     @updated="handleDrawingConfigSaved"
   />
+
+  <!-- Naming convention setup modal - hiện khi upload bản vẽ đầu tiên hoặc xác nhận parsed result -->
+  <DrawingNamingSetupModal
+    v-if="type === 'drawing' && parentId && showNamingSetupModal"
+    :show="showNamingSetupModal"
+    :project-id="parentId"
+    :filename="namingSetupFilename"
+    :is-first-time="isNamingFirstTime"
+    @close="showNamingSetupModal = false"
+    @skip="onNamingSetupSkip"
+    @confirmed="onNamingSetupConfirmed"
+  />
 </template>
 
 <script setup lang="ts">
@@ -275,7 +256,8 @@ import { useToast } from "~/composables/state/useToast";
 import { useProjectTree } from "~/composables/api/useProjectTree";
 import { autoScanDrawingFile, type DrawingAutoScanResult } from "~/utils/drawing-auto-scan";
 import { DISCIPLINE_OPTIONS, DRAWING_TYPE_OPTIONS } from "~/constants/drawing-meta";
-import type { ValidateFilenameResponse } from "~/types/naming-convention";
+import type { ValidateFilenameResponse, NamingField } from "~/types/naming-convention";
+import { useNamingConvention } from "~/composables/api/useNamingConvention";
 
 export type CreateFormType = "project" | "building" | "floor" | "discipline" | "drawing" | "task";
 
@@ -295,6 +277,27 @@ const emit = defineEmits<{
 const api = useApi();
 const toast = useToast();
 const { fetchTree } = useProjectTree();
+const { getNamingConvention } = useNamingConvention();
+
+// Naming convention setup modal state
+const showNamingSetupModal = ref(false);
+const isNamingFirstTime = ref(false);
+const namingSetupFilename = ref("");
+
+// Multi-file upload state (used when naming convention is set up)
+type MultiFileItem = {
+  file: File;
+  name: string;
+  status: "validating" | "valid" | "invalid";
+  drawingCode: string;
+  parsedValues: Record<string, string>;
+  error: string;
+};
+const hasNamingConvention = ref(false);
+const showConventionDetail = ref(false);
+const savedConvention = ref<{ separator: string; fields: { type: string; label?: string }[]; exampleFilename?: string } | null>(null);
+const multiFiles = ref<MultiFileItem[]>([]);
+const multiFileInputRef = ref<HTMLInputElement | null>(null);
 
 const submitting = ref(false);
 const errorMsg = ref("");
@@ -962,6 +965,9 @@ const requiresDrawingIntervention = computed(() => {
 const canSubmitDrawing = computed(() => {
   if (props.type !== "drawing") return true;
   if (drawingMode.value === "3d") return !!ifcFile.value && !!ifcName.value.trim();
+  if (hasNamingConvention.value) {
+    return multiFiles.value.some((f) => f.status === "valid");
+  }
   return !!uploadFile.value && !!generatedDrawingName.value;
 });
 
@@ -1123,31 +1129,193 @@ const handleFileChange = async (e: Event) => {
   namingAutoFillError.value = "";
 
   if (!props.parentId) return;
+
+  // Kiểm tra naming convention đã được cài đặt chưa
+  try {
+    const convention = await getNamingConvention(props.parentId);
+
+    if (convention.isDefault || !convention._id) {
+      // Lần đầu - chưa có convention → hiện bảng setup để người dùng gán nhãn
+      namingSetupFilename.value = input.files[0].name;
+      isNamingFirstTime.value = true;
+      showNamingSetupModal.value = true;
+    } else {
+      // Đã có convention → tự động parse và điền form, không hỏi lại
+      await autoParseWithConvention(input.files[0].name, convention);
+    }
+  } catch {
+    // Silent fail - user điền tay
+  }
+};
+
+// Parse ngầm theo convention đã lưu và điền vào form
+const autoParseWithConvention = async (filename: string, convention: { separator: string; fields: any[] }) => {
   try {
     const result = await api.post<ValidateFilenameResponse>(
       `/naming-conventions/${props.parentId}/validate`,
-      { filename: input.files[0].name }
+      { filename }
     );
-    if (result?.parsed?.isValid && result.parsed.fields?.length) {
-      const getVal = (type: string) =>
-        result.parsed.fields.find((f) => f.type === type)?.matchedKeyword?.code ||
-        result.parsed.fields.find((f) => f.type === type)?.value ||
-        "";
-      const parsedProjectPrefix = getVal("projectPrefix");
-      if (parsedProjectPrefix) selectedProjectCode.value = parsedProjectPrefix;
-      drawingMetaForm.buildingCode = getVal("building") || drawingMetaForm.buildingCode;
-      drawingMetaForm.levelCode = getVal("level") || drawingMetaForm.levelCode;
-      drawingMetaForm.disciplineCode = getVal("discipline") || drawingMetaForm.disciplineCode;
-      drawingMetaForm.drawingTypeCode = getVal("drawingType") || drawingMetaForm.drawingTypeCode;
-      drawingMetaForm.numberCode = getVal("runningNumber") || drawingMetaForm.numberCode;
-      drawingMetaForm.freeText = getVal("description") || drawingMetaForm.freeText;
-      namingAutoFilled.value = true;
-    } else if (result?.parsed?.errors?.length) {
-      namingAutoFillError.value = result.parsed.errors[0];
+    if (result?.parsed?.fields?.length) {
+      const parsedValues: Record<string, string> = {};
+      result.parsed.fields.forEach((f) => {
+        parsedValues[f.type] = f.matchedKeyword?.code || f.value || "";
+      });
+      applyNamingParsedFields(result.parsed.fields.map((f) => f.type), parsedValues);
     }
   } catch {
-    // Silent fail - user can still fill manually
+    // Silent fail
   }
+};
+
+// Áp dụng parsed values từ naming convention vào form fields
+const applyNamingParsedFields = (fieldTypes: string[], parsedValues: Record<string, string>) => {
+  const getVal = (type: string) => parsedValues[type] || "";
+
+  // Map các field types phổ biến vào form fields
+  const project = getVal("project") || getVal("projectPrefix");
+  if (project) selectedProjectCode.value = project;
+  drawingMetaForm.buildingCode = getVal("building") || drawingMetaForm.buildingCode;
+  drawingMetaForm.levelCode = getVal("level") || drawingMetaForm.levelCode;
+  drawingMetaForm.disciplineCode = getVal("discipline") || drawingMetaForm.disciplineCode;
+  drawingMetaForm.drawingTypeCode = getVal("content_type") || getVal("drawingType") || drawingMetaForm.drawingTypeCode;
+  drawingMetaForm.numberCode = getVal("runningNumber") || drawingMetaForm.numberCode;
+  drawingMetaForm.freeText = getVal("description") || drawingMetaForm.freeText;
+  namingAutoFilled.value = true;
+};
+
+const onNamingSetupConfirmed = async (data: { separator: string; fields: NamingField[]; parsedValues: Record<string, string> }) => {
+  showNamingSetupModal.value = false;
+  hasNamingConvention.value = true;
+
+  // Cập nhật savedConvention để badge và lần "Chỉnh sửa" tiếp theo thấy đúng dữ liệu
+  savedConvention.value = {
+    separator: data.separator,
+    fields: data.fields,
+    exampleFilename: namingSetupFilename.value || savedConvention.value?.exampleFilename
+  };
+
+  if (isNamingFirstTime.value) {
+    // First time: add the first file (from namingSetupFilename) with already-parsed values
+    // The file is already in uploadFile, create it as a valid multi-file item
+    if (uploadFile.value) {
+      const separator = data.separator || "-";
+      const drawingCode = data.fields
+        .map((f) => data.parsedValues[f.type] || "")
+        .filter(Boolean)
+        .join(separator)
+        .toUpperCase();
+      multiFiles.value = [{
+        file: uploadFile.value,
+        name: uploadFile.value.name,
+        status: drawingCode ? "valid" : "invalid",
+        drawingCode,
+        parsedValues: data.parsedValues,
+        error: drawingCode ? "" : "Không thể sinh tên bản vẽ từ quy tắc"
+      }];
+      uploadFile.value = null;
+    }
+  } else {
+    // Re-setup: re-validate all existing files
+    for (let i = 0; i < multiFiles.value.length; i++) {
+      multiFiles.value[i] = { ...multiFiles.value[i], status: "validating" };
+    }
+    for (let i = 0; i < multiFiles.value.length; i++) {
+      await validateMultiFileItem(i);
+    }
+  }
+};
+
+const onNamingSetupSkip = () => {
+  showNamingSetupModal.value = false;
+  // Dùng tên file gốc, không auto-fill
+};
+
+const handleMultiFileChange = async (e: Event) => {
+  const input = e.target as HTMLInputElement;
+  if (!input.files || !input.files.length) return;
+
+  const newFiles = Array.from(input.files);
+  const startIndex = multiFiles.value.length;
+  const items: MultiFileItem[] = newFiles.map((f) => ({
+    file: f,
+    name: f.name,
+    status: "validating",
+    drawingCode: "",
+    parsedValues: {},
+    error: ""
+  }));
+  multiFiles.value = [...multiFiles.value, ...items];
+
+  // Reset input so same files can be re-added after removal
+  input.value = "";
+
+  // Validate each file against the convention
+  for (let i = 0; i < items.length; i++) {
+    await validateMultiFileItem(startIndex + i);
+  }
+};
+
+const validateMultiFileItem = async (index: number) => {
+  const item = multiFiles.value[index];
+  if (!item || !props.parentId) return;
+
+  try {
+    const result = await api.post<ValidateFilenameResponse>(
+      `/naming-conventions/${props.parentId}/validate`,
+      { filename: item.file.name }
+    );
+
+    const isValid = result?.parsed?.isValid;
+    if (isValid && result.suggestedFormat) {
+      const parsedValues: Record<string, string> = {};
+      result.parsed?.fields?.forEach((f) => {
+        parsedValues[f.type] = f.matchedKeyword?.code || f.value || "";
+      });
+      // Build drawing code from parsed fields joined by separator
+      const separator = result.convention?.separator || "-";
+      const drawingCode = result.parsed.fields
+        .map((f) => f.matchedKeyword?.code || f.value || "")
+        .filter(Boolean)
+        .join(separator)
+        .toUpperCase();
+      multiFiles.value[index] = {
+        ...item,
+        status: "valid",
+        drawingCode: drawingCode || result.suggestedFormat,
+        parsedValues,
+        error: ""
+      };
+    } else {
+      const errMsg = result?.parsed?.errors?.[0] || "Tên file không đúng quy tắc đặt tên";
+      multiFiles.value[index] = {
+        ...item,
+        status: "invalid",
+        drawingCode: "",
+        parsedValues: {},
+        error: errMsg
+      };
+    }
+  } catch {
+    multiFiles.value[index] = {
+      ...item,
+      status: "invalid",
+      drawingCode: "",
+      parsedValues: {},
+      error: "Không kiểm tra được tên file"
+    };
+  }
+};
+
+const removeMultiFile = (index: number) => {
+  multiFiles.value.splice(index, 1);
+};
+
+const onResetNamingConvention = () => {
+  // Ưu tiên file đang chọn → exampleFilename đã lưu
+  const firstFile = multiFiles.value[0];
+  namingSetupFilename.value = firstFile?.name || savedConvention.value?.exampleFilename || "";
+  isNamingFirstTime.value = false;
+  showNamingSetupModal.value = true;
 };
 
 const handleIfcFileChange = (e: Event) => {
@@ -1193,8 +1361,12 @@ const resetForm = () => {
   drawingMetaForm.numberCode = "";
   drawingMetaForm.freeText = "";
   showDrawingConfigInForm.value = false;
+  showNamingSetupModal.value = false;
+  namingSetupFilename.value = "";
   namingAutoFilled.value = false;
   namingAutoFillError.value = "";
+  multiFiles.value = [];
+  // Don't reset hasNamingConvention / savedConvention — they persist across uploads in same project
 
   errorMsg.value = "";
 };
@@ -1262,7 +1434,29 @@ const handleSubmit = async () => {
           break;
         }
 
-        // 2D PDF upload
+        // 2D PDF upload — multi-file mode when convention is set up
+        if (hasNamingConvention.value) {
+          const validFiles = multiFiles.value.filter((f) => f.status === "valid");
+          if (!validFiles.length) {
+            errorMsg.value = "Không có file hợp lệ để tải lên. Kiểm tra lại tên file theo quy tắc.";
+            return;
+          }
+          // Upload valid files sequentially; use last result for "created" emit
+          for (const item of validFiles) {
+            const formData = new FormData();
+            formData.append("projectId", props.parentId);
+            formData.append("drawingCode", item.drawingCode);
+            formData.append("name", item.drawingCode);
+            if (Object.keys(item.parsedValues).length > 0) {
+              formData.append("parsedMetadata", JSON.stringify(item.parsedValues));
+            }
+            formData.append("file", item.file);
+            result = await api.upload("/drawings", formData);
+          }
+          break;
+        }
+
+        // Legacy single-file upload (no convention or skipped setup)
         if (!uploadFile.value) {
           errorMsg.value = "Vui lòng chọn file PDF";
           return;
@@ -1345,6 +1539,21 @@ watch(() => props.show, async (newVal) => {
     }
     if (props.type === "drawing") {
       await Promise.all([fetchDrawingProjectCode(), fetchDrawingConfig()]);
+      if (props.parentId) {
+        try {
+          const convention = await getNamingConvention(props.parentId);
+          hasNamingConvention.value = !!(convention._id && !convention.isDefault);
+          if (hasNamingConvention.value) {
+            savedConvention.value = {
+              separator: convention.separator,
+              fields: convention.fields,
+              exampleFilename: convention.exampleFilename
+            };
+          }
+        } catch {
+          hasNamingConvention.value = false;
+        }
+      }
     }
     if (props.type === "task") {
       form.pinX = props.initialPinX ?? 0.5;

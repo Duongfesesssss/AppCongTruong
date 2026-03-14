@@ -40,26 +40,6 @@
       <button
         v-if="canManageMembers"
         class="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        @click="showDrawingConfigModal = true"
-      >
-        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        Cấu hình bản vẽ
-      </button>
-      <button
-        v-if="canManageMembers"
-        class="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        @click="showNamingConventionModal = true"
-      >
-        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-        </svg>
-        Naming Convention
-      </button>
-      <button
-        v-if="canManageMembers"
-        class="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
         @click="showPermissionSettingsModal = true"
       >
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -155,21 +135,6 @@
       @updated="handleMembersUpdated"
     />
 
-    <ProjectDrawingConfig
-      :show="showDrawingConfigModal"
-      :project-id="currentProjectId"
-      :project-name="currentProjectName"
-      @close="showDrawingConfigModal = false"
-      @updated="handleDrawingConfigUpdated"
-    />
-
-    <NamingConventionModal
-      :show="showNamingConventionModal"
-      :project-id="currentProjectId"
-      :project-name="currentProjectName"
-      @close="showNamingConventionModal = false"
-      @saved="showNamingConventionModal = false"
-    />
 
     <PermissionSettingsModal
       :show="showPermissionSettingsModal"
@@ -218,7 +183,6 @@ import { useSelectedNode, type SelectedNode } from "~/composables/state/useSelec
 import type { CreateFormType } from "~/components/forms/CreateForm.vue";
 import { useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
-import NamingConventionModal from "~/components/naming-convention/NamingConventionModal.vue";
 import PermissionSettingsModal from "~/components/PermissionSettingsModal.vue";
 import DrawingListPanel from "~/components/DrawingListPanel.vue";
 
@@ -240,8 +204,6 @@ const createFormParentId = ref<string | undefined>(undefined);
 const showDeleteConfirm = ref(false);
 const deleteTarget = ref<{ nodeId: string; nodeType: string; nodeName: string } | null>(null);
 const showMembersModal = ref(false);
-const showDrawingConfigModal = ref(false);
-const showNamingConventionModal = ref(false);
 const showPermissionSettingsModal = ref(false);
 const showDrawingListModal = ref(false);
 
@@ -310,9 +272,6 @@ const handleMembersUpdated = async () => {
   await fetchTree();
 };
 
-const handleDrawingConfigUpdated = async () => {
-  await fetchTree();
-};
 
 const handlePermissionSettingsUpdated = async () => {
   await fetchTree();

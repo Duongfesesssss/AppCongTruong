@@ -16,7 +16,7 @@
       <div>
         <label class="mb-1 block text-xs font-medium text-slate-700">Project</label>
         <select
-          v-model="localFilters.projectId"
+          v-model="localProjectId"
           class="h-9 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-800 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
           @change="onProjectChange"
         >
@@ -25,63 +25,34 @@
         </select>
       </div>
 
-      <template v-if="localFilters.projectId">
-        <div v-if="loadingConvention" class="py-2 text-center text-xs text-slate-400">
-          Đang tải cấu hình...
+      <template v-if="localProjectId">
+        <!-- Loading -->
+        <div v-if="loading" class="flex items-center gap-2 py-3 text-xs text-slate-400">
+          <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Đang tải dữ liệu...
         </div>
 
         <template v-else>
-          <!-- Building Code -->
-          <div>
-            <label class="mb-1 block text-xs font-medium text-slate-700">Tòa nhà</label>
-            <Multiselect
-              v-model="localFilters.buildingCodes"
-              :options="buildingOptions"
-              :multiple="true"
-              :searchable="true"
-              :close-on-select="false"
-              :taggable="true"
-              placeholder="Chọn hoặc nhập mã tòa..."
-              track-by="value"
-              label="label"
-              @tag="addTag('buildingCodes', $event)"
-              @update:model-value="emitFilters"
-            />
-          </div>
+          <!-- No data -->
+          <p v-if="!filterFields.length" class="py-2 text-xs text-slate-400">
+            Chưa có bản vẽ nào được tải lên hoặc chưa thiết lập quy tắc đặt tên.
+          </p>
 
-          <!-- Level Code -->
-          <div>
-            <label class="mb-1 block text-xs font-medium text-slate-700">Tầng</label>
+          <!-- Dynamic multiselect per convention field -->
+          <div v-for="field in filterFields" :key="field.type">
+            <label class="mb-1 block text-xs font-medium text-slate-700">{{ field.label }}</label>
             <Multiselect
-              v-model="localFilters.levelCodes"
-              :options="levelOptions"
-              :multiple="true"
+              v-model="selections[field.type]"
+              :options="field.options"
+              mode="tags"
               :searchable="true"
               :close-on-select="false"
-              :taggable="true"
-              placeholder="Chọn hoặc nhập mã tầng..."
-              track-by="value"
-              label="label"
-              @tag="addTag('levelCodes', $event)"
-              @update:model-value="emitFilters"
-            />
-          </div>
-
-          <!-- Discipline Code -->
-          <div>
-            <label class="mb-1 block text-xs font-medium text-slate-700">Bộ môn</label>
-            <Multiselect
-              v-model="localFilters.disciplineCodes"
-              :options="disciplineOptions"
-              :multiple="true"
-              :searchable="true"
-              :close-on-select="false"
-              :taggable="true"
-              placeholder="Chọn hoặc nhập mã bộ môn..."
-              track-by="value"
-              label="label"
-              @tag="addTag('disciplineCodes', $event)"
-              @update:model-value="emitFilters"
+              :placeholder="`Chọn ${field.label.toLowerCase()}...`"
+              no-options-text="Không có dữ liệu"
+              no-results-text="Không tìm thấy"
             />
           </div>
 
@@ -89,28 +60,27 @@
           <div>
             <label class="mb-1 block text-xs font-medium text-slate-700">Loại file</label>
             <select
-              v-model="localFilters.fileType"
+              v-model="fileType"
               class="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-400/20"
-              @change="emitFilters"
             >
               <option value="">Tất cả</option>
               <option value="2d">2D (PDF)</option>
               <option value="3d">3D (IFC)</option>
-              <option value="hybrid">Hybrid (2D + 3D)</option>
+              <option value="hybrid">Hybrid</option>
             </select>
           </div>
         </template>
       </template>
 
       <!-- Active filter tags -->
-      <div v-if="hasActiveFilters" class="flex flex-wrap gap-2">
+      <div v-if="hasActiveFilters" class="flex flex-wrap gap-1.5">
         <span
-          v-for="filter in activeFiltersList"
-          :key="filter.key"
+          v-for="tag in activeTagsList"
+          :key="tag.key"
           class="inline-flex items-center gap-1 rounded-full bg-brand-100 px-2.5 py-1 text-xs text-brand-700"
         >
-          {{ filter.label }}
-          <button class="hover:text-brand-900" @click="removeFilter(filter.key)">
+          {{ tag.label }}
+          <button class="hover:text-brand-900" @click="removeTag(tag)">
             <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -125,18 +95,18 @@
 import Multiselect from "@vueform/multiselect";
 import { useApi } from "~/composables/api/useApi";
 
-type FilterOption = { label: string; value: string };
-
 export type DrawingFilters = {
   projectId: string;
-  buildingCodes: FilterOption[];
-  levelCodes: FilterOption[];
-  disciplineCodes: FilterOption[];
+  // Dynamic per-field selections: fieldType → selected values[]
+  fieldSelections: Record<string, string[]>;
   fileType: string;
 };
 
-type KeywordMapping = { code: string; label: string };
-type NamingField = { type: string; enabled: boolean; keywords: KeywordMapping[] };
+type FilterField = {
+  type: string;
+  label: string;
+  options: string[];
+};
 
 const props = defineProps<{
   projects: Array<{ id: string; name: string }>;
@@ -148,129 +118,106 @@ const emit = defineEmits<{
 }>();
 
 const api = useApi();
-const loadingConvention = ref(false);
-const conventionFields = ref<NamingField[]>([]);
+const loading = ref(false);
+const localProjectId = ref(props.defaultProjectId ?? "");
+const filterFields = ref<FilterField[]>([]);
+const selections = ref<Record<string, string[]>>({});
+const fileType = ref("");
 
-const localFilters = ref<DrawingFilters>({
-  projectId: props.defaultProjectId ?? "",
-  buildingCodes: [],
-  levelCodes: [],
-  disciplineCodes: [],
-  fileType: ""
-});
-
-const getOptions = (type: string): FilterOption[] => {
-  const field = conventionFields.value.find((f) => f.type === type && f.enabled);
-  if (!field) return [];
-  return field.keywords.map((k) => ({
-    label: k.label ? `${k.code} - ${k.label}` : k.code,
-    value: k.code
-  }));
-};
-
-const buildingOptions = computed(() => getOptions("building"));
-const levelOptions = computed(() => getOptions("level"));
-const disciplineOptions = computed(() => getOptions("discipline"));
-
-const fetchConvention = async (projectId: string) => {
-  if (!projectId) { conventionFields.value = []; return; }
-  loadingConvention.value = true;
+const fetchFilterOptions = async (projectId: string) => {
+  if (!projectId) { filterFields.value = []; return; }
+  loading.value = true;
   try {
-    const data = await api.get<{ fields: NamingField[] }>(`/naming-conventions/${projectId}`);
-    conventionFields.value = data?.fields ?? [];
+    const data = await api.get<FilterField[]>(`/drawings/filter-options?projectId=${projectId}`);
+    filterFields.value = data ?? [];
+    // Init selections for new fields, keep existing ones
+    const newSelections: Record<string, string[]> = {};
+    filterFields.value.forEach((f) => {
+      newSelections[f.type] = selections.value[f.type] ?? [];
+    });
+    selections.value = newSelections;
   } catch {
-    conventionFields.value = [];
+    filterFields.value = [];
   } finally {
-    loadingConvention.value = false;
+    loading.value = false;
   }
 };
 
 const onProjectChange = () => {
-  localFilters.value.buildingCodes = [];
-  localFilters.value.levelCodes = [];
-  localFilters.value.disciplineCodes = [];
-  localFilters.value.fileType = "";
-  fetchConvention(localFilters.value.projectId);
+  selections.value = {};
+  fileType.value = "";
+  fetchFilterOptions(localProjectId.value);
   emitFilters();
 };
 
-const addTag = (field: "buildingCodes" | "levelCodes" | "disciplineCodes", tag: string) => {
-  const opt = { label: tag.toUpperCase(), value: tag.toUpperCase() };
-  localFilters.value[field].push(opt);
-  emitFilters();
-};
-
-const hasActiveFilters = computed(() =>
-  !!localFilters.value.projectId ||
-  localFilters.value.buildingCodes.length > 0 ||
-  localFilters.value.levelCodes.length > 0 ||
-  localFilters.value.disciplineCodes.length > 0 ||
-  localFilters.value.fileType !== ""
-);
-
-const activeFiltersList = computed(() => {
-  const list: Array<{ key: string; label: string }> = [];
-  if (localFilters.value.projectId) {
-    const name = props.projects.find((p) => p.id === localFilters.value.projectId)?.name;
-    if (name) list.push({ key: "project", label: `Project: ${name}` });
-  }
-  localFilters.value.buildingCodes.forEach((b) =>
-    list.push({ key: `building-${b.value}`, label: `Tòa: ${b.value}` })
-  );
-  localFilters.value.levelCodes.forEach((l) =>
-    list.push({ key: `levelCode-${l.value}`, label: `Tầng: ${l.value}` })
-  );
-  localFilters.value.disciplineCodes.forEach((d) =>
-    list.push({ key: `disciplineCode-${d.value}`, label: `BM: ${d.value}` })
-  );
-  if (localFilters.value.fileType) {
-    const labels: Record<string, string> = { "2d": "2D", "3d": "3D", hybrid: "Hybrid" };
-    list.push({ key: "fileType", label: `Loại: ${labels[localFilters.value.fileType] || localFilters.value.fileType}` });
-  }
-  return list;
+const hasActiveFilters = computed(() => {
+  if (!localProjectId.value) return false;
+  if (fileType.value) return true;
+  return Object.values(selections.value).some((v) => v.length > 0);
 });
 
-const removeFilter = (key: string) => {
-  if (key === "project") {
-    localFilters.value.projectId = "";
-    localFilters.value.buildingCodes = [];
-    localFilters.value.levelCodes = [];
-    localFilters.value.disciplineCodes = [];
-    conventionFields.value = [];
-  } else if (key.startsWith("building-")) {
-    const v = key.replace("building-", "");
-    localFilters.value.buildingCodes = localFilters.value.buildingCodes.filter((b) => b.value !== v);
-  } else if (key.startsWith("levelCode-")) {
-    const v = key.replace("levelCode-", "");
-    localFilters.value.levelCodes = localFilters.value.levelCodes.filter((l) => l.value !== v);
-  } else if (key.startsWith("disciplineCode-")) {
-    const v = key.replace("disciplineCode-", "");
-    localFilters.value.disciplineCodes = localFilters.value.disciplineCodes.filter((d) => d.value !== v);
-  } else if (key === "fileType") {
-    localFilters.value.fileType = "";
+const activeTagsList = computed(() => {
+  const tags: Array<{ key: string; label: string; fieldType: string; value: string }> = [];
+  filterFields.value.forEach((field) => {
+    (selections.value[field.type] ?? []).forEach((val) => {
+      tags.push({
+        key: `${field.type}:${val}`,
+        label: `${field.label}: ${val}`,
+        fieldType: field.type,
+        value: val
+      });
+    });
+  });
+  if (fileType.value) {
+    const labels: Record<string, string> = { "2d": "2D", "3d": "3D", hybrid: "Hybrid" };
+    tags.push({ key: "fileType", label: `Loại: ${labels[fileType.value] || fileType.value}`, fieldType: "fileType", value: fileType.value });
+  }
+  return tags;
+});
+
+const removeTag = (tag: { fieldType: string; value: string }) => {
+  if (tag.fieldType === "fileType") {
+    fileType.value = "";
+  } else {
+    selections.value[tag.fieldType] = (selections.value[tag.fieldType] ?? []).filter((v) => v !== tag.value);
   }
   emitFilters();
 };
 
 const clearAllFilters = () => {
-  localFilters.value = { projectId: "", buildingCodes: [], levelCodes: [], disciplineCodes: [], fileType: "" };
-  conventionFields.value = [];
+  selections.value = {};
+  fileType.value = "";
   emitFilters();
 };
 
-const emitFilters = () => emit("filter-change", { ...localFilters.value });
+const emitFilters = () => {
+  emit("filter-change", {
+    projectId: localProjectId.value,
+    fieldSelections: { ...selections.value },
+    fileType: fileType.value
+  });
+};
 
-// Init: load convention for default project
+// Init on defaultProjectId
 watch(
   () => props.defaultProjectId,
   (id) => {
-    if (id) {
-      localFilters.value.projectId = id;
-      fetchConvention(id);
+    if (id && id !== localProjectId.value) {
+      localProjectId.value = id;
+      fetchFilterOptions(id);
       emitFilters();
     }
   },
   { immediate: true }
+);
+
+// Đồng bộ filter lên parent mỗi khi state thay đổi để đảm bảo query luôn đúng.
+watch(
+  [localProjectId, fileType, selections],
+  () => {
+    emitFilters();
+  },
+  { deep: true }
 );
 </script>
 

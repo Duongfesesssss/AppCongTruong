@@ -4,7 +4,8 @@ import type {
   UpdateNamingConventionRequest,
   ValidateFilenameRequest,
   ValidateFilenameResponse,
-  FormatSuggestionResponse
+  FormatSuggestionResponse,
+  ParseFilenameResponse
 } from "~/types/naming-convention";
 import { useApi } from "~/composables/api/useApi";
 
@@ -43,12 +44,25 @@ export const useNamingConvention = () => {
     return api.get<FormatSuggestionResponse>(`/naming-conventions/${projectId}/format-suggestion`);
   };
 
+  // Parse filename thành segments để người dùng assign tag
+  const parseFilename = async (
+    projectId: string,
+    filename: string,
+    separator?: string
+  ): Promise<ParseFilenameResponse> => {
+    return api.post<ParseFilenameResponse>(`/naming-conventions/${projectId}/parse-filename`, {
+      filename,
+      separator
+    });
+  };
+
   return {
     getNamingConvention,
     createOrUpdateNamingConvention,
     updateNamingConvention,
     deleteNamingConvention,
     validateFilename,
-    getFormatSuggestion
+    getFormatSuggestion,
+    parseFilename
   };
 };

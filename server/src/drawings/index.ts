@@ -24,6 +24,9 @@ import { FloorModel } from "../floors/floor.model";
 import { DisciplineModel } from "../disciplines/discipline.model";
 import { validateIfcFile, validateIfcFilePath } from "./ifc-validator";
 import { linkDrawingsSchema, unlinkDrawingSchema } from "./drawing.schema";
+import { NamingConventionModel } from "../naming-conventions/naming-convention.model";
+import { createDefaultNamingFields } from "../naming-conventions/default-keywords";
+import { Types } from "mongoose";
 
 const router = Router();
 
@@ -104,6 +107,78 @@ const normalizeTagName = (value: string) => {
     .toLowerCase()
     .replace(/[^a-z0-9.:-]+/g, "-")
     .replace(/^-+|-+$/g, "");
+};
+
+const normalizeConventionFieldTypeForTags = (type: string) => {
+  const raw = String(type || "").trim();
+  if (!raw) return "";
+  const lower = raw.toLowerCase();
+  if (lower === "projectprefix") return "project";
+  if (lower === "drawingtype") return "content_type";
+  return raw;
+};
+
+const toTagFieldType = (key: string) => {
+  const normalized = normalizeConventionFieldTypeForTags(key);
+  const lower = normalized.toLowerCase();
+
+  const map: Record<string, string> = {
+    projectcode: "project",
+    buildingcode: "building",
+    levelcode: "level",
+    floorcode: "floor",
+    disciplinecode: "discipline",
+    drawingtypecode: "content_type",
+    numbercode: "runningNumber",
+    freetext: "description",
+    unitcode: "originator",
+    buildingpartcode: "volume",
+    filetypecode: "file_type"
+  };
+
+  return map[lower] || normalized;
+};
+
+const buildTagNamesFromParsedMetadataInput = (input?: Record<string, string | undefined>) => {
+  if (!input) return [];
+  const tags: string[] = [];
+
+  Object.entries(input).forEach(([rawKey, rawValue]) => {
+    const value = sanitizeText(rawValue || "");
+    if (!value) return;
+
+    const fieldType = toTagFieldType(rawKey);
+    if (!fieldType) return;
+
+    tags.push(`${fieldType}:${value}`);
+  });
+
+  return mergeTagNames(tags);
+};
+
+const buildTagNamesFromParsedFields = (
+  fields?: Array<{ type: string; value: string; matchedKeyword?: { code: string } }>
+) => {
+  if (!fields || !fields.length) return [];
+  const tags: string[] = [];
+
+  fields.forEach((field) => {
+    const fieldType = toTagFieldType(field.type);
+    if (!fieldType) return;
+    const value = sanitizeText(field.matchedKeyword?.code || field.value || "");
+    if (!value) return;
+    tags.push(`${fieldType}:${value}`);
+  });
+
+  return mergeTagNames(tags);
+};
+
+const isUsableFilterOptionValue = (value: string) => {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  const normalized = text.toLowerCase();
+  if (["_", "-", ".", "n/a", "na", "null", "undefined"].includes(normalized)) return false;
+  return true;
 };
 
 const mergeTagNames = (...groups: Array<string[] | undefined>) => {
@@ -298,6 +373,133 @@ const resolveAutoScan = async ({
   return { parsed: null, flexibleParsed, metadata: null, source: "none" as const };
 };
 
+const pickFirstNonEmpty = (...values: Array<unknown>) => {
+  for (const value of values) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (text) return text;
+  }
+  return undefined;
+};
+
+const normalizeParsedMetadataInput = (
+  input?: Record<string, string | undefined>
+): {
+  projectCode?: string;
+  buildingCode?: string;
+  levelCode?: string;
+  disciplineCode?: string;
+  drawingTypeCode?: string;
+  numberCode?: string;
+  freeText?: string;
+  unitCode?: string;
+  buildingPartCode?: string;
+  floorCode?: string;
+  fileTypeCode?: string;
+} | undefined => {
+  if (!input) return undefined;
+
+  // pickCode: lấy giá trị đầu tiên không rỗng và chuẩn hóa thành uppercase (khớp với normalizeCodeSegment ở filter query)
+  const pickCode = (...values: Array<string | undefined>) => {
+    const raw = pickFirstNonEmpty(...values);
+    return raw ? normalizeCodeSegment(raw) : undefined;
+  };
+
+  const normalized = {
+    projectCode: pickCode(input.projectCode, input.project, input.projectPrefix),
+    buildingCode: pickCode(input.buildingCode, input.building),
+    levelCode: pickCode(input.levelCode, input.level, input.floor),
+    disciplineCode: pickCode(input.disciplineCode, input.discipline),
+    drawingTypeCode: pickCode(input.drawingTypeCode, input.content_type, input.drawingType),
+    numberCode: pickCode(input.numberCode, input.runningNumber),
+    freeText: pickFirstNonEmpty(input.freeText, input.description, input.room), // giữ nguyên, không chuẩn hóa
+    unitCode: pickCode(input.unitCode, input.originator),
+    buildingPartCode: pickCode(input.buildingPartCode, input.volume, input.zone),
+    floorCode: pickCode(input.floorCode, input.floor, input.level),
+    fileTypeCode: pickCode(input.fileTypeCode, input.file_type)
+  };
+
+  const hasAnyValue = Object.values(normalized).some((value) => !!value);
+  return hasAnyValue ? normalized : undefined;
+};
+
+const hasMeaningfulParsedMetadata = (input?: Record<string, unknown>) => {
+  if (!input) return false;
+  const keys = [
+    "projectCode",
+    "buildingCode",
+    "levelCode",
+    "disciplineCode",
+    "drawingTypeCode",
+    "numberCode",
+    "freeText",
+    "unitCode",
+    "buildingPartCode",
+    "floorCode",
+    "fileTypeCode"
+  ];
+  return keys.some((key) => {
+    const value = input[key];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+};
+
+const backfillDrawingParsedMetadataForProject = async (projectId: string) => {
+  const drawings = await DrawingModel.find({
+    projectId: new Types.ObjectId(projectId)
+  })
+    .select("_id originalName name drawingCode parsedMetadata tagNames")
+    .lean();
+
+  if (!drawings.length) return;
+
+  const operations: Array<{ updateOne: { filter: Record<string, unknown>; update: Record<string, unknown> } }> = [];
+
+  for (const drawing of drawings) {
+    const sourceName = drawing.originalName || drawing.name || drawing.drawingCode;
+    if (!sourceName) continue;
+
+    const parsed = await parseFilenameWithProjectConvention(sourceName, projectId);
+    if (!parsed?.isValid) continue;
+
+    const updateSet: Record<string, unknown> = {};
+
+    const metadata = normalizeParsedMetadataInput(
+      extractMetadataFromParsed(parsed) as Record<string, string | undefined>
+    );
+    // Luôn cập nhật parsedMetadata (kể cả khi đã có) để đảm bảo giá trị được chuẩn hóa (uppercase)
+    if (metadata) {
+      const existingMeta = JSON.stringify(drawing.parsedMetadata ?? {});
+      const newMeta = JSON.stringify(metadata);
+      if (existingMeta !== newMeta) {
+        updateSet.parsedMetadata = metadata;
+      }
+    }
+
+    const conventionTags = buildTagNamesFromParsedFields(parsed.fields);
+    if (conventionTags.length > 0) {
+      const mergedTags = mergeTagNames((drawing.tagNames as string[] | undefined) || [], conventionTags);
+      const existingTags = Array.from(new Set(((drawing.tagNames as string[] | undefined) || []).slice().sort()));
+      const nextTags = Array.from(new Set(mergedTags.slice().sort()));
+      if (JSON.stringify(existingTags) !== JSON.stringify(nextTags)) {
+        updateSet.tagNames = mergedTags;
+      }
+    }
+
+    if (Object.keys(updateSet).length === 0) continue;
+
+    operations.push({
+      updateOne: {
+        filter: { _id: drawing._id },
+        update: { $set: updateSet }
+      }
+    });
+  }
+
+  if (operations.length > 0) {
+    await DrawingModel.bulkWrite(operations, { ordered: false });
+  }
+};
+
 router.post(
   "/",
   requireAuth,
@@ -336,8 +538,29 @@ router.post(
         drawingTypeCode?: string;
         numberCode?: string;
         freeText?: string;
+        project?: string;
+        building?: string;
+        level?: string;
+        floor?: string;
+        discipline?: string;
+        content_type?: string;
+        drawingType?: string;
+        runningNumber?: string;
+        description?: string;
+        room?: string;
+        originator?: string;
+        volume?: string;
+        zone?: string;
+        file_type?: string;
+        unitCode?: string;
+        buildingPartCode?: string;
+        floorCode?: string;
+        fileTypeCode?: string;
+        projectPrefix?: string;
       };
     };
+
+    const normalizedParsedMetadataInput = normalizeParsedMetadataInput(parsedMetadataInput);
 
     const project = await ProjectModel.findById(projectId);
     ensureProjectRole(project, req.user!.id, "technician", "Project khong ton tai hoac khong co quyen");
@@ -536,8 +759,12 @@ router.post(
     const fallbackName = parsed?.suggestedName || drawingCode || path.parse(req.file.originalname).name;
     const safeNameRaw = sanitizeText(name?.trim() ? name : fallbackName);
     const safeName = safeNameRaw || "Drawing";
+    const conventionFieldTags = parsedMetadataInput
+      ? buildTagNamesFromParsedMetadataInput(parsedMetadataInput as Record<string, string | undefined>)
+      : buildTagNamesFromParsedFields(flexibleParsed?.fields);
     const mergedTags = mergeTagNames(
       parsed?.tagNames,
+      conventionFieldTags,
       [
         building ? `building:${building.code}` : undefined,
         floor ? `floor:${floor.code}` : undefined,
@@ -581,16 +808,22 @@ router.post(
       drawingCode,
       versionIndex,
       isLatestVersion: true,
-      parsedMetadata: parsedMetadataInput
-        ? {
-            projectCode: parsedMetadataInput.projectCode,
-            buildingCode: parsedMetadataInput.buildingCode,
-            levelCode: parsedMetadataInput.levelCode,
-            disciplineCode: parsedMetadataInput.disciplineCode,
-            drawingTypeCode: parsedMetadataInput.drawingTypeCode,
-            numberCode: parsedMetadataInput.numberCode,
-            freeText: parsedMetadataInput.freeText
-          }
+      parsedMetadata: normalizedParsedMetadataInput
+        ? normalizedParsedMetadataInput
+        : namingMetadata
+          ? {
+              projectCode: namingMetadata.projectCode,
+              buildingCode: namingMetadata.buildingCode,
+              levelCode: namingMetadata.levelCode,
+              disciplineCode: namingMetadata.disciplineCode,
+              drawingTypeCode: namingMetadata.drawingTypeCode,
+              numberCode: namingMetadata.numberCode,
+              freeText: namingMetadata.freeText,
+              unitCode: namingMetadata.unitCode,
+              buildingPartCode: namingMetadata.buildingPartCode,
+              floorCode: namingMetadata.floorCode,
+              fileTypeCode: namingMetadata.fileTypeCode
+            }
         : parsed
           ? {
               projectCode: parsed.projectCode,
@@ -635,7 +868,7 @@ router.post(
                   levelCode: namingMetadata.levelCode,
                   disciplineCode: namingMetadata.disciplineCode,
                   drawingTypeCode: namingMetadata.drawingTypeCode,
-                  projectCode: namingMetadata.projectPrefix
+                  projectCode: namingMetadata.projectCode
                 }
               : undefined,
           namingConvention: flexibleParsed
@@ -671,8 +904,79 @@ router.get(
       filter.projectId = requestedProjectId;
     }
 
-    if (req.query.tagName) {
-      filter.tagNames = normalizeTagName(String(req.query.tagName));
+    const requestedTagNames = [
+      ...(req.query.tagName ? [req.query.tagName] : []),
+      ...(req.query.tagNames ? (Array.isArray(req.query.tagNames) ? req.query.tagNames : [req.query.tagNames]) : [])
+    ]
+      .map((tag) => normalizeTagName(String(tag)))
+      .filter(Boolean);
+
+    if (requestedTagNames.length > 0) {
+      // Với các prefix chuẩn từ naming-convention, lọc theo parsedMetadata để tránh sai do tag cũ.
+      // Chỉ fallback sang tagNames cho các prefix không biết trước.
+      const knownPrefixToMetaKey: Record<string, string> = {
+        project: "parsedMetadata.projectCode",
+        building: "parsedMetadata.buildingCode",
+        level: "parsedMetadata.levelCode",
+        floor: "parsedMetadata.floorCode",
+        discipline: "parsedMetadata.disciplineCode",
+        content_type: "parsedMetadata.drawingTypeCode",
+        runningnumber: "parsedMetadata.numberCode",
+        originator: "parsedMetadata.unitCode",
+        volume: "parsedMetadata.buildingPartCode",
+        zone: "parsedMetadata.buildingPartCode",
+        file_type: "parsedMetadata.fileTypeCode"
+      };
+
+      const knownValueGroups = new Map<string, string[]>();
+      const unknownTagGroups = new Map<string, string[]>();
+
+      requestedTagNames.forEach((tag) => {
+        const colonIndex = tag.indexOf(":");
+        if (colonIndex <= 0) {
+          const list = unknownTagGroups.get("__plain__") ?? [];
+          list.push(tag);
+          unknownTagGroups.set("__plain__", list);
+          return;
+        }
+
+        const prefix = tag.slice(0, colonIndex);
+        const value = tag.slice(colonIndex + 1);
+        if (!value) return;
+
+        if (knownPrefixToMetaKey[prefix]) {
+          const list = knownValueGroups.get(prefix) ?? [];
+          list.push(value);
+          knownValueGroups.set(prefix, list);
+        } else {
+          const list = unknownTagGroups.get(prefix) ?? [];
+          list.push(tag);
+          unknownTagGroups.set(prefix, list);
+        }
+      });
+
+      const andConditions: Array<Record<string, unknown>> = [];
+
+      knownValueGroups.forEach((values, prefix) => {
+        const dbKey = knownPrefixToMetaKey[prefix];
+        const normalizedValues = values.map((value) => normalizeCodeSegment(value)).filter(Boolean);
+        if (normalizedValues.length > 0) {
+          andConditions.push({ [dbKey]: { $in: normalizedValues } });
+        }
+      });
+
+      unknownTagGroups.forEach((group) => {
+        if (group.length > 0) {
+          andConditions.push({ tagNames: { $in: group } });
+        }
+      });
+
+      if (andConditions.length === 1) {
+        Object.assign(filter, andConditions[0]);
+      } else if (andConditions.length > 1) {
+        const existingAnd = (filter.$and as Array<Record<string, unknown>> | undefined) ?? [];
+        filter.$and = [...existingAnd, ...andConditions];
+      }
     }
 
     // Multi-select filters for building/floor/discipline
@@ -729,6 +1033,30 @@ router.get(
       }
     }
 
+    if (req.query.drawingTypeCodes) {
+      const drawingTypeCodes = Array.isArray(req.query.drawingTypeCodes) ? req.query.drawingTypeCodes : [req.query.drawingTypeCodes];
+      if (drawingTypeCodes.length > 0) {
+        const normalizedCodes = drawingTypeCodes.map((code) => normalizeCodeSegment(String(code)));
+        filter["parsedMetadata.drawingTypeCode"] = { $in: normalizedCodes.filter(Boolean) };
+      }
+    }
+
+    if (req.query.numberCodes) {
+      const numberCodes = Array.isArray(req.query.numberCodes) ? req.query.numberCodes : [req.query.numberCodes];
+      if (numberCodes.length > 0) {
+        const normalizedCodes = numberCodes.map((code) => normalizeCodeSegment(String(code)));
+        filter["parsedMetadata.numberCode"] = { $in: normalizedCodes.filter(Boolean) };
+      }
+    }
+
+    if (req.query.projectCodes) {
+      const projectCodes = Array.isArray(req.query.projectCodes) ? req.query.projectCodes : [req.query.projectCodes];
+      if (projectCodes.length > 0) {
+        const normalizedCodes = projectCodes.map((code) => normalizeCodeSegment(String(code)));
+        filter["parsedMetadata.projectCode"] = { $in: normalizedCodes.filter(Boolean) };
+      }
+    }
+
     // Filter by phase/stage (if the field exists in parsedMetadata or will be added)
     if (req.query.phases) {
       const phases = Array.isArray(req.query.phases) ? req.query.phases : [req.query.phases];
@@ -755,6 +1083,114 @@ router.get(
       createdAt: -1
     });
     return sendSuccess(res, drawings);
+  })
+);
+
+// Map convention field types → parsedMetadata db keys → API query param names
+const FIELD_TYPE_TO_META_KEY: Record<string, string> = {
+  building: "parsedMetadata.buildingCode",
+  level: "parsedMetadata.levelCode",
+  discipline: "parsedMetadata.disciplineCode",
+  content_type: "parsedMetadata.drawingTypeCode",
+  runningNumber: "parsedMetadata.numberCode",
+  description: "parsedMetadata.freeText",
+  project: "parsedMetadata.projectCode",
+  originator: "parsedMetadata.unitCode",
+  volume: "parsedMetadata.buildingPartCode",
+  zone: "parsedMetadata.buildingPartCode",
+  floor: "parsedMetadata.floorCode",
+  file_type: "parsedMetadata.fileTypeCode",
+};
+
+const normalizeConventionFieldType = (type: string) => normalizeConventionFieldTypeForTags(type);
+
+router.get(
+  "/filter-options",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { projectId } = req.query;
+    if (!projectId || typeof projectId !== "string") {
+      return res.status(400).json({ error: "projectId required" });
+    }
+
+    // Verify user has access to this project
+    const userProjects = await ProjectModel.find(buildProjectAccessFilter(req.user!.id)).select("_id");
+    const hasAccess = userProjects.some((p) => p._id.toString() === projectId);
+    if (!hasAccess) return sendSuccess(res, []);
+
+    // Backfill metadata cho các bản vẽ cũ chưa có parsedMetadata để bộ lọc dùng được ngay.
+    await backfillDrawingParsedMetadataForProject(projectId);
+
+    // Get naming convention to know field types and labels
+    const convention = await NamingConventionModel.findOne({ projectId: new Types.ObjectId(projectId) });
+    const sourceFields = (convention?.fields ?? createDefaultNamingFields())
+      .filter((f) => f.enabled && normalizeConventionFieldType(f.type) !== "description")
+      .sort((a, b) => a.order - b.order);
+
+    const usedTypes = new Set<string>();
+    const fields = sourceFields
+      .map((field) => ({
+        ...field,
+        type: normalizeConventionFieldType(field.type)
+      }))
+      .filter((field) => {
+        if (!field.type) return false;
+        if (usedTypes.has(field.type)) return false;
+        usedTypes.add(field.type);
+        return true;
+      });
+
+    const baseFilter = {
+      projectId: new Types.ObjectId(projectId),
+      $or: [{ isLatestVersion: true }, { isLatestVersion: { $exists: false } }]
+    };
+
+    // Get distinct values for each enabled convention field
+    const results = await Promise.all(
+      fields.map(async (field) => {
+        const dbKey = FIELD_TYPE_TO_META_KEY[field.type];
+        if (!dbKey) return null;
+
+        const values: string[] = await DrawingModel.distinct(dbKey, {
+          ...baseFilter,
+          [dbKey]: { $exists: true, $ne: "" }
+        });
+
+        const options = values
+          .map((value) => String(value).trim())
+          .filter(isUsableFilterOptionValue)
+          .sort();
+        return {
+          type: field.type,
+          label: field.label || field.type,
+          dbKey,
+          options,
+          values: options
+        };
+      })
+    );
+
+    const tagOptions = (await DrawingModel.distinct("tagNames", {
+      ...baseFilter,
+      tagNames: { $exists: true, $ne: [] }
+    })) as string[];
+
+    const normalizedTagOptions = tagOptions
+      .map((value) => String(value).trim())
+      .filter((value) => isUsableFilterOptionValue(value) && value.includes(":"))
+      .sort();
+    if (normalizedTagOptions.length > 0) {
+      results.push({
+        type: "tagNames",
+        label: "Tag name",
+        dbKey: "tagNames",
+        options: normalizedTagOptions,
+        values: normalizedTagOptions
+      });
+    }
+
+    // Return only fields that have actual data
+    return sendSuccess(res, results.filter((r) => r !== null && r.options.length > 0));
   })
 );
 

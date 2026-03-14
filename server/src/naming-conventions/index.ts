@@ -12,11 +12,64 @@ import {
   deleteNamingConventionSchema,
   validateFilenameSchema
 } from "./naming-convention.schema";
-import { NamingConventionModel } from "./naming-convention.model";
+import { NamingConventionModel, type NamingField } from "./naming-convention.model";
 import { createDefaultNamingFields } from "./default-keywords";
 import { parseFilenameWithConvention, generateFormatSuggestion } from "./flexible-parser";
 
 const router = Router();
+
+const LEGACY_FIELD_TYPE_MAP: Record<string, string> = {
+  projectprefix: "project",
+  drawingtype: "content_type"
+};
+
+const DEFAULT_FIELD_LABELS: Record<string, string> = {
+  project: "Mã dự án",
+  originator: "Người tạo / Nhà thầu",
+  discipline: "Bộ môn",
+  building: "Tòa nhà / Khu",
+  volume: "Volume / Khối",
+  zone: "Khu vực",
+  level: "Tầng",
+  room: "Phòng",
+  content_type: "Loại bản vẽ",
+  file_type: "Loại file",
+  grid_axis: "Trục lưới",
+  runningNumber: "Số thứ tự",
+  description: "Mô tả"
+};
+
+const normalizeFieldType = (type: string) => {
+  const raw = String(type || "").trim();
+  if (!raw) return "";
+  const mapped = LEGACY_FIELD_TYPE_MAP[raw.toLowerCase()];
+  return mapped || raw;
+};
+
+const normalizeNamingFields = (fields: NamingField[]): NamingField[] => {
+  const byType = new Map<string, NamingField>();
+
+  (fields || [])
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .forEach((field) => {
+      const normalizedType = normalizeFieldType(field.type);
+      if (!normalizedType) return;
+      if (byType.has(normalizedType)) return;
+
+      byType.set(normalizedType, {
+        ...field,
+        type: normalizedType,
+        label: (field.label || "").trim() || DEFAULT_FIELD_LABELS[normalizedType] || normalizedType,
+        keywords: field.keywords || []
+      });
+    });
+
+  return Array.from(byType.values()).map((field, index) => ({
+    ...field,
+    order: index
+  }));
+};
 
 /**
  * GET /api/naming-conventions/:projectId
@@ -44,6 +97,12 @@ router.get(
       });
     }
 
+    const normalizedFields = normalizeNamingFields(convention.fields as NamingField[]);
+    if (JSON.stringify(normalizedFields) !== JSON.stringify(convention.fields)) {
+      convention.fields = normalizedFields;
+      await convention.save();
+    }
+
     return sendSuccess(res, convention);
   })
 );
@@ -57,26 +116,23 @@ router.post(
   requireAuth,
   validate(createNamingConventionSchema),
   asyncHandler(async (req, res) => {
-    const { projectId, separator, fields } = req.body;
+    const { projectId, separator, fields, exampleFilename } = req.body;
 
     const project = await ProjectModel.findById(projectId);
     ensureProjectRole(project, req.user!.id, "admin", "Chi admin moi co the cau hinh naming convention");
 
-    // Validate: Không được có 2 field cùng type và enabled
-    const enabledTypes = fields.filter((f: any) => f.enabled).map((f: any) => f.type);
-    const uniqueTypes = new Set(enabledTypes);
-    if (enabledTypes.length !== uniqueTypes.size) {
-      throw errors.validation("Khong duoc co 2 truong cung type va enabled");
-    }
+    // Upsert naming convention — dùng $set tường minh để không xoá exampleFilename cũ
+    const setData: Record<string, unknown> = {
+      separator: separator || "-",
+      fields: normalizeNamingFields(fields)
+    };
+    if (exampleFilename) setData.exampleFilename = exampleFilename;
 
-    // Upsert naming convention
     const convention = await NamingConventionModel.findOneAndUpdate(
       { projectId },
       {
-        projectId,
-        separator: separator || "-",
-        fields,
-        createdBy: req.user!.id
+        $set: setData,
+        $setOnInsert: { projectId, createdBy: req.user!.id }
       },
       { upsert: true, new: true }
     );
@@ -105,21 +161,12 @@ router.put(
       throw errors.notFound("Naming convention chua duoc cau hinh");
     }
 
-    // Validate nếu có fields
-    if (fields) {
-      const enabledTypes = fields.filter((f: any) => f.enabled).map((f: any) => f.type);
-      const uniqueTypes = new Set(enabledTypes);
-      if (enabledTypes.length !== uniqueTypes.size) {
-        throw errors.validation("Khong duoc co 2 truong cung type va enabled");
-      }
-    }
-
     // Update
     if (separator !== undefined) {
       convention.separator = separator;
     }
     if (fields !== undefined) {
-      convention.fields = fields;
+      convention.fields = normalizeNamingFields(fields);
     }
 
     await convention.save();
@@ -173,6 +220,8 @@ router.post(
         fields: createDefaultNamingFields(),
         createdBy: req.user!.id
       });
+    } else {
+      convention.fields = normalizeNamingFields(convention.fields as NamingField[]);
     }
 
     // Parse filename
@@ -217,6 +266,8 @@ router.get(
         fields: createDefaultNamingFields(),
         createdBy: req.user!.id
       });
+    } else {
+      convention.fields = normalizeNamingFields(convention.fields as NamingField[]);
     }
 
     const suggestedFormat = generateFormatSuggestion(convention);
@@ -225,6 +276,57 @@ router.get(
       format: suggestedFormat,
       separator: convention.separator,
       fields: convention.fields.filter((f) => f.enabled).sort((a, b) => a.order - b.order)
+    });
+  })
+);
+
+/**
+ * POST /api/naming-conventions/:projectId/parse-filename
+ * Phân tích filename thành các segment để người dùng gán tag
+ * Dùng khi setup naming convention từ file đầu tiên
+ */
+router.post(
+  "/:projectId/parse-filename",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { projectId } = req.params;
+    const { filename, separator } = req.body;
+
+    if (!filename || typeof filename !== "string") {
+      throw errors.validation("filename la bat buoc");
+    }
+
+    const project = await ProjectModel.findById(projectId);
+    ensureProjectRole(project, req.user!.id, "technician", "Project khong ton tai hoac khong co quyen");
+
+    // Loại extension
+    const nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+
+    // Auto-detect delimiter nếu không truyền vào
+    let detectedSeparator = separator;
+    if (!detectedSeparator) {
+      const candidates = ["-", "_", ".", " "];
+      let maxCount = 0;
+      for (const sep of candidates) {
+        const count = nameWithoutExt.split(sep).length - 1;
+        if (count > maxCount) {
+          maxCount = count;
+          detectedSeparator = sep;
+        }
+      }
+      if (!detectedSeparator) detectedSeparator = "-";
+    }
+
+    const segments = nameWithoutExt
+      .split(detectedSeparator)
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+
+    return sendSuccess(res, {
+      filename,
+      nameWithoutExt,
+      detectedSeparator,
+      segments
     });
   })
 );

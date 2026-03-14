@@ -44,7 +44,29 @@ const parsedMetadataSchema = z.object({
   disciplineCode: z.string().max(40).optional(),
   drawingTypeCode: z.string().max(40).optional(),
   numberCode: z.string().max(40).optional(),
-  freeText: z.string().max(100).optional()
+  freeText: z.string().max(100).optional(),
+  // New naming-convention field types from setup modal
+  project: z.string().max(40).optional(),
+  building: z.string().max(40).optional(),
+  level: z.string().max(40).optional(),
+  floor: z.string().max(40).optional(),
+  discipline: z.string().max(40).optional(),
+  content_type: z.string().max(40).optional(),
+  drawingType: z.string().max(40).optional(),
+  runningNumber: z.string().max(40).optional(),
+  description: z.string().max(100).optional(),
+  room: z.string().max(100).optional(),
+  originator: z.string().max(40).optional(),
+  volume: z.string().max(40).optional(),
+  zone: z.string().max(40).optional(),
+  file_type: z.string().max(40).optional(),
+  // Legacy aliases (compat)
+  projectPrefix: z.string().max(40).optional(),
+  // Already-normalized optional keys (compat)
+  unitCode: z.string().max(40).optional(),
+  buildingPartCode: z.string().max(40).optional(),
+  floorCode: z.string().max(40).optional(),
+  fileTypeCode: z.string().max(40).optional()
 }).optional();
 
 export const createDrawingSchema = z.object({
@@ -94,6 +116,7 @@ export const listDrawingSchema = z.object({
   query: z.object({
     projectId: objectIdSchema.optional(),
     tagName: z.string().min(1).max(80).optional(),
+    tagNames: z.preprocess(parseArrayParam, z.array(z.string().min(1).max(80)).max(100).optional()),
     includeVersions: z
       .preprocess((value) => {
         if (value === undefined || value === null) return false;
@@ -110,6 +133,9 @@ export const listDrawingSchema = z.object({
     buildingCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
     levelCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
     disciplineCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
+    drawingTypeCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
+    numberCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
+    projectCodes: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(50).optional()),
     // Filter by phase/stage (if field exists)
     phases: z.preprocess(parseArrayParam, z.array(z.string().max(40)).max(30).optional()),
     // Filter by file type

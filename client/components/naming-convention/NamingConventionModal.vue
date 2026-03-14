@@ -98,7 +98,7 @@
                     <!-- Field Info -->
                     <div class="flex-1 min-w-0">
                       <div class="flex items-center gap-2 flex-wrap">
-                        <span class="font-medium text-sm text-slate-800">{{ getFieldLabel(field.type) }}</span>
+                        <span class="font-medium text-sm text-slate-800">{{ getFieldLabel(field) }}</span>
                         <span class="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-mono text-slate-500">{{ field.type }}</span>
                         <span v-if="field.required" class="rounded bg-rose-100 px-1.5 py-0.5 text-xs font-medium text-rose-600">Bắt buộc</span>
                       </div>
@@ -195,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import type { NamingConvention, NamingField, NamingFieldType } from "~/types/naming-convention";
+import type { NamingConvention, NamingField } from "~/types/naming-convention";
 import FieldEditModal from "./FieldEditModal.vue";
 import { useNamingConvention } from "~/composables/api/useNamingConvention";
 import { useToast } from "~/composables/state/useToast";
@@ -234,17 +234,10 @@ const editingFieldIndex = ref(-1);
 const dragIndex = ref(-1);
 const dragOverIndex = ref(-1);
 
-const fieldLabels: Record<NamingFieldType, string> = {
-  projectPrefix: "Mã dự án",
-  building: "Tòa nhà/Khu",
-  level: "Tầng",
-  discipline: "Bộ môn",
-  drawingType: "Loại bản vẽ",
-  runningNumber: "Số thứ tự",
-  description: "Mô tả"
+// Hiển thị label của field - ưu tiên field.label, fallback về type
+const getFieldLabel = (field: NamingField): string => {
+  return field.label || field.type;
 };
-
-const getFieldLabel = (type: NamingFieldType) => fieldLabels[type] || type;
 
 const loadConvention = async () => {
   if (!props.projectId) return;
@@ -267,16 +260,8 @@ const updateFormatPreview = () => {
 
   const parts = enabledFields.map((field) => {
     const wrap = !field.required;
-    let placeholder = "";
-    switch (field.type) {
-      case "projectPrefix": placeholder = "ABC"; break;
-      case "building": placeholder = field.keywords[0]?.code || "HQ"; break;
-      case "level": placeholder = field.keywords[0]?.code || "L1"; break;
-      case "discipline": placeholder = field.keywords[0]?.code || "KT"; break;
-      case "drawingType": placeholder = field.keywords[0]?.code || "MB"; break;
-      case "runningNumber": placeholder = "001"; break;
-      case "description": placeholder = "Description"; break;
-    }
+    // Dùng keyword đầu tiên làm placeholder nếu có, không thì dùng label/type
+    const placeholder = field.keywords[0]?.code || field.label || field.type;
     return wrap ? `[${placeholder}]` : placeholder;
   });
 

@@ -108,53 +108,60 @@ export const DEFAULT_ORIGINATOR_KEYWORDS: KeywordMapping[] = [
   { code: "BRL", label: "BRL Company" }
 ];
 
-// Tạo default field configuration
+// Tạo default field configuration (backward compat)
 export const createDefaultNamingFields = () => {
   return [
     {
-      type: "projectPrefix" as const,
+      type: "project",
+      label: "Mã dự án",
       order: 0,
       enabled: true,
       required: true,
       keywords: []
     },
     {
-      type: "building" as const,
+      type: "building",
+      label: "Tòa nhà",
       order: 1,
       enabled: true,
       required: true,
       keywords: DEFAULT_BUILDING_KEYWORDS
     },
     {
-      type: "level" as const,
+      type: "level",
+      label: "Tầng",
       order: 2,
       enabled: true,
       required: true,
       keywords: DEFAULT_LEVEL_KEYWORDS
     },
     {
-      type: "discipline" as const,
+      type: "discipline",
+      label: "Bộ môn",
       order: 3,
       enabled: true,
       required: true,
       keywords: DEFAULT_DISCIPLINE_KEYWORDS
     },
     {
-      type: "drawingType" as const,
+      type: "content_type",
+      label: "Loại bản vẽ",
       order: 4,
       enabled: true,
       required: false,
       keywords: DEFAULT_DRAWING_TYPE_KEYWORDS
     },
     {
-      type: "runningNumber" as const,
+      type: "runningNumber",
+      label: "Số thứ tự",
       order: 5,
       enabled: true,
       required: false,
       keywords: []
     },
     {
-      type: "description" as const,
+      type: "description",
+      label: "Mô tả",
       order: 6,
       enabled: false,
       required: false,

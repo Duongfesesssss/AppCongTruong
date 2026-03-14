@@ -166,7 +166,10 @@
 </template>
 
 <script setup lang="ts">
+import { useRuntimeConfig, useState } from "#app";
+import { ref, watch } from "vue";
 import DrawingFilterPanel from "./DrawingFilterPanel.vue";
+import type { DrawingFilters } from "./DrawingFilterPanel.vue";
 import { useApi } from "../composables/api/useApi";
 
 type Drawing = {
@@ -185,18 +188,15 @@ type Drawing = {
   };
 };
 
-type DrawingFilters = {
-  projectId: string;
-  buildingCodes: Array<{ label: string; value: string }>;
-  levelCodes: Array<{ label: string; value: string }>;
-  disciplineCodes: Array<{ label: string; value: string }>;
-  fileType: string;
-};
-
-const props = defineProps<{
-  projectId?: string;
-  projects?: Array<{ id: string; name: string }>;
-}>();
+const props = withDefaults(
+  defineProps<{
+    projectId?: string;
+    projects?: Array<{ id: string; name: string }>;
+  }>(),
+  {
+    projects: () => []
+  }
+);
 
 const emit = defineEmits<{
   (e: "view-drawing", drawing: Drawing): void;
@@ -211,9 +211,7 @@ const downloadingIds = ref(new Set<string>());
 
 const currentFilters = ref<DrawingFilters>({
   projectId: props.projectId ?? "",
-  buildingCodes: [],
-  levelCodes: [],
-  disciplineCodes: [],
+  fieldSelections: {},
   fileType: ""
 });
 
@@ -229,17 +227,27 @@ const fetchDrawings = async () => {
     qs.set("projectId", pid);
     qs.set("includeVersions", "false");
 
-    const f = currentFilters.value;
-    (Array.isArray(f.buildingCodes) ? f.buildingCodes : []).forEach((b: { value: string }) => qs.append("buildingCodes", b.value));
-    (Array.isArray(f.levelCodes) ? f.levelCodes : []).forEach((l: { value: string }) => qs.append("levelCodes", l.value));
-    (Array.isArray(f.disciplineCodes) ? f.disciplineCodes : []).forEach((d: { value: string }) => qs.append("disciplineCodes", d.value));
-    if (f.fileType) qs.set("fileType", f.fileType);
+    // Chuyển toàn bộ fieldSelections → tagNames (format: fieldType:value lowercase)
+    // Điều này đảm bảo nhất quán về case và hoạt động với mọi loại field (kể cả custom)
+    const sels = currentFilters.value.fieldSelections ?? {};
+    Object.entries(sels).forEach(([fieldType, rawValues]) => {
+      const values = Array.isArray(rawValues) ? rawValues : [];
+      if (!values.length) return;
+      if (fieldType === "tagNames") {
+        // Đã ở format tag (field:value) — dùng trực tiếp
+        values.forEach((value: string) => qs.append("tagNames", value));
+      } else {
+        // Chuyển sang tag format: fieldType:value (lowercase)
+        values.forEach((value: string) => qs.append("tagNames", `${fieldType}:${value.toLowerCase()}`));
+      }
+    });
+
+    if (currentFilters.value.fileType) qs.set("fileType", currentFilters.value.fileType);
 
     const result = await api.get<Drawing[]>(`/drawings?${qs.toString()}`);
     drawings.value = result;
   } catch (err: any) {
     error.value = err.message || "Không thể tải danh sách bản vẽ";
-    console.error("Error fetching drawings:", err);
   } finally {
     loading.value = false;
   }

@@ -171,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import type { NamingField, NamingFieldType } from "~/types/naming-convention";
+import type { NamingField } from "~/types/naming-convention";
 import { useKeywordLibrary, namingFieldToLibraryField, type KeywordLibraryItem } from "~/composables/api/useKeywordLibrary";
 import { useToast } from "~/composables/state/useToast";
 
@@ -197,17 +197,8 @@ const newKwLabel = ref("");
 const addingToLibrary = ref(false);
 const addLibraryError = ref("");
 
-const fieldLabels: Record<NamingFieldType, string> = {
-  projectPrefix: "Mã dự án",
-  building: "Tòa nhà/Khu",
-  level: "Tầng",
-  discipline: "Bộ môn",
-  drawingType: "Loại bản vẽ",
-  runningNumber: "Số thứ tự",
-  description: "Mô tả"
-};
-
-const getFieldLabel = (type: NamingFieldType) => fieldLabels[type] || type;
+// Dùng field.label trực tiếp thay vì map từ type
+const getFieldLabel = (type: string) => localField.value?.label || type;
 
 const libraryFieldType = computed(() => {
   if (!localField.value) return null;

@@ -39,12 +39,33 @@ export const parseFilenameWithProjectConvention = async (
  */
 export const extractMetadataFromParsed = (parsed: FlexibleParsedFilename) => {
   return {
+    // Hỗ trợ cả legacy field types và CMS scope field types.
+    projectCode:
+      getMatchedKeywordCode(parsed, "project") ||
+      getFieldValue(parsed, "project") ||
+      getMatchedKeywordCode(parsed, "projectPrefix") ||
+      getFieldValue(parsed, "projectPrefix"),
     buildingCode: getMatchedKeywordCode(parsed, "building") || getFieldValue(parsed, "building"),
-    levelCode: getMatchedKeywordCode(parsed, "level") || getFieldValue(parsed, "level"),
+    levelCode:
+      getMatchedKeywordCode(parsed, "level") ||
+      getFieldValue(parsed, "level") ||
+      getMatchedKeywordCode(parsed, "floor") ||
+      getFieldValue(parsed, "floor"),
+    floorCode: getMatchedKeywordCode(parsed, "floor") || getFieldValue(parsed, "floor"),
     disciplineCode: getMatchedKeywordCode(parsed, "discipline") || getFieldValue(parsed, "discipline"),
-    drawingTypeCode: getMatchedKeywordCode(parsed, "drawingType") || getFieldValue(parsed, "drawingType"),
-    runningNumber: getFieldValue(parsed, "runningNumber"),
-    description: getFieldValue(parsed, "description"),
-    projectPrefix: getFieldValue(parsed, "projectPrefix")
+    drawingTypeCode:
+      getMatchedKeywordCode(parsed, "content_type") ||
+      getFieldValue(parsed, "content_type") ||
+      getMatchedKeywordCode(parsed, "drawingType") ||
+      getFieldValue(parsed, "drawingType"),
+    numberCode: getFieldValue(parsed, "runningNumber"),
+    freeText: getFieldValue(parsed, "description"),
+    unitCode: getMatchedKeywordCode(parsed, "originator") || getFieldValue(parsed, "originator"),
+    buildingPartCode:
+      getMatchedKeywordCode(parsed, "volume") ||
+      getFieldValue(parsed, "volume") ||
+      getMatchedKeywordCode(parsed, "zone") ||
+      getFieldValue(parsed, "zone"),
+    fileTypeCode: getMatchedKeywordCode(parsed, "file_type") || getFieldValue(parsed, "file_type")
   };
 };

@@ -17,6 +17,14 @@ type CachedGetEntry<T> = {
 const GET_CACHE_PREFIX = "api-get-cache-v1";
 const GET_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
+const isCriticalRealtimeGetPath = (path: string) => {
+  return (
+    path.startsWith("/drawings/filter-options") ||
+    path.startsWith("/naming-conventions/") ||
+    path.startsWith("/drawings?")
+  );
+};
+
 export type ApiOfflineQueuedResult = {
   __offlineQueued: true;
   queueId: string;
@@ -296,7 +304,7 @@ export const useApi = () => {
       }
 
       const responseData = (payload as ApiSuccess<T>).data;
-      if (method === "GET") {
+      if (method === "GET" && !isCriticalRealtimeGetPath(path)) {
         writeCachedGet(path, responseData);
       }
 
@@ -304,6 +312,7 @@ export const useApi = () => {
     } catch (err) {
       if (
         method === "GET" &&
+        !isCriticalRealtimeGetPath(path) &&
         process.client &&
         ((offlineSync && offlineSync.isNetworkError(err)) || (!offlineSync && err instanceof Error))
       ) {
