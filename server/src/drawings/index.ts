@@ -12,7 +12,6 @@ import { buildProjectAccessFilter, ensureProjectRole, canDeleteResource } from "
 import { createDrawingSchema, drawingIdSchema, listDrawingSchema } from "./drawing.schema";
 import { DrawingModel } from "./drawing.model";
 import { parseDrawingFilename, parseDrawingMetadataFromText } from "./filename-parser";
-import { parseFilenameWithProjectConvention, extractMetadataFromParsed } from "./naming-convention-helper";
 import { createUploader, handleFileUpload } from "../lib/uploads";
 import { config } from "../lib/config";
 import { uploadLimiter } from "../middlewares/rate-limit";
@@ -24,8 +23,6 @@ import { FloorModel } from "../floors/floor.model";
 import { DisciplineModel } from "../disciplines/discipline.model";
 import { validateIfcFile, validateIfcFilePath } from "./ifc-validator";
 import { linkDrawingsSchema, unlinkDrawingSchema } from "./drawing.schema";
-import { NamingConventionModel } from "../naming-conventions/naming-convention.model";
-import { createDefaultNamingFields } from "../naming-conventions/default-keywords";
 import { Types } from "mongoose";
 
 const router = Router();
@@ -342,19 +339,7 @@ const resolveAutoScan = async ({
   ocrText?: string;
   projectId: string;
 }) => {
-  // Try naming convention first (new approach)
-  const flexibleParsed = await parseFilenameWithProjectConvention(originalName, projectId);
-  if (flexibleParsed && flexibleParsed.isValid) {
-    const metadata = extractMetadataFromParsed(flexibleParsed);
-    return {
-      parsed: null, // Legacy parsed format not used
-      flexibleParsed,
-      metadata,
-      source: "naming-convention" as const
-    };
-  }
-
-  // Fallback to legacy parser
+  // Legacy parser là nguồn chính, không phụ thuộc naming convention.
   const parsedFromPreferredName = preferredName ? parseDrawingFilename(preferredName) : null;
   if (parsedFromPreferredName) {
     return { parsed: parsedFromPreferredName, flexibleParsed: null, metadata: null, source: "manual" as const };
@@ -370,7 +355,7 @@ const resolveAutoScan = async ({
     return { parsed: parsedFromOcr, flexibleParsed: null, metadata: null, source: "ocr" as const };
   }
 
-  return { parsed: null, flexibleParsed, metadata: null, source: "none" as const };
+  return { parsed: null, flexibleParsed: null, metadata: null, source: "none" as const };
 };
 
 const pickFirstNonEmpty = (...values: Array<unknown>) => {
@@ -422,6 +407,76 @@ const normalizeParsedMetadataInput = (
   return hasAnyValue ? normalized : undefined;
 };
 
+const mergeParsedMetadata = (
+  ...sources: Array<
+    | {
+        projectCode?: string;
+        buildingCode?: string;
+        levelCode?: string;
+        disciplineCode?: string;
+        drawingTypeCode?: string;
+        numberCode?: string;
+        freeText?: string;
+        unitCode?: string;
+        buildingPartCode?: string;
+        floorCode?: string;
+        fileTypeCode?: string;
+      }
+    | undefined
+  >
+) => {
+  const merged: Record<string, string> = {};
+  const keys = [
+    "projectCode",
+    "buildingCode",
+    "levelCode",
+    "disciplineCode",
+    "drawingTypeCode",
+    "numberCode",
+    "freeText",
+    "unitCode",
+    "buildingPartCode",
+    "floorCode",
+    "fileTypeCode"
+  ];
+
+  for (const source of sources) {
+    if (!source) continue;
+    for (const key of keys) {
+      const value = source[key as keyof typeof source];
+      if (typeof value === "string" && value.trim() && !merged[key]) {
+        merged[key] = value;
+      }
+    }
+  }
+
+  return Object.keys(merged).length > 0 ? (merged as typeof sources[number]) : undefined;
+};
+
+const extractHeuristicMetadataFromCode = (input?: string) => {
+  const raw = sanitizeText(input || "").trim();
+  if (!raw) return undefined;
+
+  // Hỗ trợ cả tên dùng '_' và drawingCode dùng '-'
+  const parts = raw
+    .replace(/[_\s]+/g, "-")
+    .split("-")
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  // Mẫu phổ biến: H120029-83-H-XX-SAN-003-...
+  if (parts.length < 6) return undefined;
+
+  return normalizeParsedMetadataInput({
+    disciplineCode: parts[1],
+    projectCode: parts[2],
+    buildingPartCode: parts[3],
+    levelCode: parts[4],
+    floorCode: parts[4],
+    drawingTypeCode: parts[5]
+  });
+};
+
 const hasMeaningfulParsedMetadata = (input?: Record<string, unknown>) => {
   if (!input) return false;
   const keys = [
@@ -458,14 +513,31 @@ const backfillDrawingParsedMetadataForProject = async (projectId: string) => {
     const sourceName = drawing.originalName || drawing.name || drawing.drawingCode;
     if (!sourceName) continue;
 
-    const parsed = await parseFilenameWithProjectConvention(sourceName, projectId);
-    if (!parsed?.isValid) continue;
+    const legacyParsed = parseDrawingFilename(sourceName) || (drawing.drawingCode ? parseDrawingFilename(drawing.drawingCode) : null);
+    const heuristicMetadata =
+      extractHeuristicMetadataFromCode(drawing.drawingCode) ||
+      extractHeuristicMetadataFromCode(drawing.originalName || drawing.name);
+
+    if (!legacyParsed && !heuristicMetadata) continue;
 
     const updateSet: Record<string, unknown> = {};
 
-    const metadata = normalizeParsedMetadataInput(
-      extractMetadataFromParsed(parsed) as Record<string, string | undefined>
+    const metadataFromLegacy = normalizeParsedMetadataInput(
+      legacyParsed
+        ? {
+            projectCode: legacyParsed.projectCode,
+            levelCode: legacyParsed.floorCode,
+            disciplineCode: legacyParsed.disciplineCode,
+            unitCode: legacyParsed.unitCode,
+            buildingCode: legacyParsed.buildingCode,
+            buildingPartCode: legacyParsed.buildingPartCode,
+            floorCode: legacyParsed.floorCode,
+            fileTypeCode: legacyParsed.fileTypeCode
+          }
+        : undefined
     );
+
+    const metadata = mergeParsedMetadata(metadataFromLegacy, heuristicMetadata);
     // Luôn cập nhật parsedMetadata (kể cả khi đã có) để đảm bảo giá trị được chuẩn hóa (uppercase)
     if (metadata) {
       const existingMeta = JSON.stringify(drawing.parsedMetadata ?? {});
@@ -475,9 +547,10 @@ const backfillDrawingParsedMetadataForProject = async (projectId: string) => {
       }
     }
 
-    const conventionTags = buildTagNamesFromParsedFields(parsed.fields);
-    if (conventionTags.length > 0) {
-      const mergedTags = mergeTagNames((drawing.tagNames as string[] | undefined) || [], conventionTags);
+    const legacyTags = legacyParsed?.tagNames ?? [];
+    const nextAutoTags = mergeTagNames(legacyTags);
+    if (nextAutoTags.length > 0) {
+      const mergedTags = mergeTagNames((drawing.tagNames as string[] | undefined) || [], nextAutoTags);
       const existingTags = Array.from(new Set(((drawing.tagNames as string[] | undefined) || []).slice().sort()));
       const nextTags = Array.from(new Set(mergedTags.slice().sort()));
       if (JSON.stringify(existingTags) !== JSON.stringify(nextTags)) {
@@ -573,8 +646,10 @@ router.post(
       projectId: project!._id.toString()
     });
     const parsed = autoScan.parsed;
-    const flexibleParsed = autoScan.flexibleParsed;
-    const namingMetadata = autoScan.metadata;
+    const heuristicUploadMetadata =
+      extractHeuristicMetadataFromCode(preferredDrawingName) ||
+      extractHeuristicMetadataFromCode(req.file.originalname) ||
+      extractHeuristicMetadataFromCode(name);
 
     let resolvedBuildingId = buildingId;
     let resolvedFloorId = floorId;
@@ -611,8 +686,8 @@ router.post(
       return disciplines.find((item) => isEquivalentCode(item.code, normalizedCode)) || null;
     };
 
-    if (!resolvedBuildingId && (parsed?.buildingCode || namingMetadata?.buildingCode)) {
-      const code = namingMetadata?.buildingCode || parsed?.buildingCode;
+    if (!resolvedBuildingId && (parsed?.buildingCode || heuristicUploadMetadata?.buildingCode)) {
+      const code = heuristicUploadMetadata?.buildingCode || parsed?.buildingCode;
       if (code) {
         const matchedBuilding = await findBuildingByParsedCode(code);
         if (matchedBuilding?._id) {
@@ -621,8 +696,8 @@ router.post(
       }
     }
 
-    if (!resolvedFloorId && (parsed?.floorCode || namingMetadata?.levelCode)) {
-      const code = namingMetadata?.levelCode || parsed?.floorCode;
+    if (!resolvedFloorId && (parsed?.floorCode || heuristicUploadMetadata?.levelCode)) {
+      const code = heuristicUploadMetadata?.levelCode || parsed?.floorCode;
       if (code) {
         const matchedFloor = await findFloorByParsedCode(code, resolvedBuildingId);
         if (matchedFloor?._id) {
@@ -634,8 +709,8 @@ router.post(
       }
     }
 
-    if (!resolvedDisciplineId && (parsed?.disciplineCode || namingMetadata?.disciplineCode)) {
-      const code = namingMetadata?.disciplineCode || parsed?.disciplineCode;
+    if (!resolvedDisciplineId && (parsed?.disciplineCode || heuristicUploadMetadata?.disciplineCode)) {
+      const code = heuristicUploadMetadata?.disciplineCode || parsed?.disciplineCode;
       if (code) {
         const matchedDiscipline = await findDisciplineByParsedCode(code, resolvedFloorId);
         if (matchedDiscipline?._id) {
@@ -686,8 +761,8 @@ router.post(
       throw errors.validation("Bo mon khong thuoc toa nha da chon");
     }
 
-    if (!building && (parsed?.buildingCode || namingMetadata?.buildingCode)) {
-      const code = namingMetadata?.buildingCode || parsed?.buildingCode;
+    if (!building && (parsed?.buildingCode || heuristicUploadMetadata?.buildingCode)) {
+      const code = heuristicUploadMetadata?.buildingCode || parsed?.buildingCode;
       if (code) {
         const sortIndex = await getNextSortIndex(BuildingModel, { projectId: project!._id });
         building = await BuildingModel.create({
@@ -700,8 +775,8 @@ router.post(
       }
     }
 
-    if (!floor && (parsed?.floorCode || namingMetadata?.levelCode) && building) {
-      const code = namingMetadata?.levelCode || parsed?.floorCode;
+    if (!floor && (parsed?.floorCode || heuristicUploadMetadata?.levelCode) && building) {
+      const code = heuristicUploadMetadata?.levelCode || parsed?.floorCode;
       if (code) {
         const sortIndex = await getNextSortIndex(FloorModel, { buildingId: building._id });
         floor = await FloorModel.create({
@@ -715,8 +790,8 @@ router.post(
       }
     }
 
-    if (!discipline && (parsed?.disciplineCode || namingMetadata?.disciplineCode) && floor && building) {
-      const code = namingMetadata?.disciplineCode || parsed?.disciplineCode;
+    if (!discipline && (parsed?.disciplineCode || heuristicUploadMetadata?.disciplineCode) && floor && building) {
+      const code = heuristicUploadMetadata?.disciplineCode || parsed?.disciplineCode;
       if (code) {
         const sortIndex = await getNextSortIndex(DisciplineModel, { floorId: floor._id });
         discipline = await DisciplineModel.create({
@@ -761,7 +836,7 @@ router.post(
     const safeName = safeNameRaw || "Drawing";
     const conventionFieldTags = parsedMetadataInput
       ? buildTagNamesFromParsedMetadataInput(parsedMetadataInput as Record<string, string | undefined>)
-      : buildTagNamesFromParsedFields(flexibleParsed?.fields);
+      : [];
     const mergedTags = mergeTagNames(
       parsed?.tagNames,
       conventionFieldTags,
@@ -799,6 +874,24 @@ router.post(
       { $set: { isLatestVersion: false } }
     );
 
+    const parsedMetadataFromLegacy = parsed
+      ? normalizeParsedMetadataInput({
+          projectCode: parsed.projectCode,
+          unitCode: parsed.unitCode,
+          disciplineCode: parsed.disciplineCode,
+          buildingCode: parsed.buildingCode,
+          buildingPartCode: parsed.buildingPartCode,
+          floorCode: parsed.floorCode,
+          fileTypeCode: parsed.fileTypeCode
+        })
+      : undefined;
+
+    const mergedCreationMetadata = mergeParsedMetadata(
+      normalizedParsedMetadataInput,
+      parsedMetadataFromLegacy,
+      heuristicUploadMetadata
+    );
+
     const drawing = await DrawingModel.create({
       projectId: project!._id,
       buildingId: resolvedBuildingId || undefined,
@@ -808,33 +901,7 @@ router.post(
       drawingCode,
       versionIndex,
       isLatestVersion: true,
-      parsedMetadata: normalizedParsedMetadataInput
-        ? normalizedParsedMetadataInput
-        : namingMetadata
-          ? {
-              projectCode: namingMetadata.projectCode,
-              buildingCode: namingMetadata.buildingCode,
-              levelCode: namingMetadata.levelCode,
-              disciplineCode: namingMetadata.disciplineCode,
-              drawingTypeCode: namingMetadata.drawingTypeCode,
-              numberCode: namingMetadata.numberCode,
-              freeText: namingMetadata.freeText,
-              unitCode: namingMetadata.unitCode,
-              buildingPartCode: namingMetadata.buildingPartCode,
-              floorCode: namingMetadata.floorCode,
-              fileTypeCode: namingMetadata.fileTypeCode
-            }
-        : parsed
-          ? {
-              projectCode: parsed.projectCode,
-              unitCode: parsed.unitCode,
-              disciplineCode: parsed.disciplineCode,
-              buildingCode: parsed.buildingCode,
-              buildingPartCode: parsed.buildingPartCode,
-              floorCode: parsed.floorCode,
-              fileTypeCode: parsed.fileTypeCode
-            }
-          : undefined,
+      parsedMetadata: mergedCreationMetadata,
       tagNames: mergedTags,
       sortIndex,
       originalName: standardizedFileName,
@@ -850,7 +917,7 @@ router.post(
         ...drawing.toObject(),
         autoScan: {
           source: autoScan.source,
-          matched: !!parsed || (flexibleParsed?.isValid ?? false),
+          matched: !!parsed,
           suggestedName: parsed?.suggestedName,
           parsedMetadata: parsed
             ? {
@@ -862,23 +929,8 @@ router.post(
                 floorCode: parsed.floorCode,
                 fileTypeCode: parsed.fileTypeCode
               }
-            : namingMetadata
-              ? {
-                  buildingCode: namingMetadata.buildingCode,
-                  levelCode: namingMetadata.levelCode,
-                  disciplineCode: namingMetadata.disciplineCode,
-                  drawingTypeCode: namingMetadata.drawingTypeCode,
-                  projectCode: namingMetadata.projectCode
-                }
               : undefined,
-          namingConvention: flexibleParsed
-            ? {
-                isValid: flexibleParsed.isValid,
-                errors: flexibleParsed.errors,
-                warnings: flexibleParsed.warnings,
-                fields: flexibleParsed.fields
-              }
-            : undefined
+          namingConvention: undefined
         }
       },
       {},
@@ -1102,6 +1154,34 @@ const FIELD_TYPE_TO_META_KEY: Record<string, string> = {
   file_type: "parsedMetadata.fileTypeCode",
 };
 
+const FALLBACK_FILTER_LABELS: Record<string, string> = {
+  project: "Project",
+  building: "Building",
+  level: "Level",
+  floor: "Floor",
+  discipline: "Discipline",
+  content_type: "Content type",
+  runningNumber: "Running number",
+  originator: "Originator",
+  volume: "Volume",
+  zone: "Zone",
+  file_type: "File type"
+};
+
+const DEFAULT_FILTER_FIELD_TYPES = [
+  "project",
+  "building",
+  "level",
+  "discipline",
+  "content_type",
+  "runningNumber",
+  "originator",
+  "volume",
+  "zone",
+  "floor",
+  "file_type"
+];
+
 const normalizeConventionFieldType = (type: string) => normalizeConventionFieldTypeForTags(type);
 
 router.get(
@@ -1121,24 +1201,14 @@ router.get(
     // Backfill metadata cho các bản vẽ cũ chưa có parsedMetadata để bộ lọc dùng được ngay.
     await backfillDrawingParsedMetadataForProject(projectId);
 
-    // Get naming convention to know field types and labels
-    const convention = await NamingConventionModel.findOne({ projectId: new Types.ObjectId(projectId) });
-    const sourceFields = (convention?.fields ?? createDefaultNamingFields())
-      .filter((f) => f.enabled && normalizeConventionFieldType(f.type) !== "description")
-      .sort((a, b) => a.order - b.order);
-
-    const usedTypes = new Set<string>();
-    const fields = sourceFields
-      .map((field) => ({
-        ...field,
-        type: normalizeConventionFieldType(field.type)
-      }))
-      .filter((field) => {
-        if (!field.type) return false;
-        if (usedTypes.has(field.type)) return false;
-        usedTypes.add(field.type);
-        return true;
-      });
+    // Không dùng naming convention để quyết định cột filter.
+    // Luôn dựa trên metadata thực tế để project mới/không setup vẫn có đủ cột.
+    const fields = DEFAULT_FILTER_FIELD_TYPES.map((type, index) => ({
+      type,
+      order: index,
+      label: FALLBACK_FILTER_LABELS[type] || type,
+      enabled: true
+    }));
 
     const baseFilter = {
       projectId: new Types.ObjectId(projectId),
@@ -1169,6 +1239,34 @@ router.get(
         };
       })
     );
+
+    // Fallback: nếu convention chưa khai báo đủ field, vẫn sinh filter từ dữ liệu parsedMetadata hiện có
+    const existingTypes = new Set(results.filter((r) => !!r).map((r) => r!.type));
+    const existingDbKeys = new Set(results.filter((r) => !!r).map((r) => r!.dbKey));
+    const fallbackCandidates = Object.entries(FIELD_TYPE_TO_META_KEY)
+      .filter(([type, dbKey]) => type !== "description" && !existingTypes.has(type) && !existingDbKeys.has(dbKey));
+
+    for (const [type, dbKey] of fallbackCandidates) {
+      const values: string[] = await DrawingModel.distinct(dbKey, {
+        ...baseFilter,
+        [dbKey]: { $exists: true, $ne: "" }
+      });
+
+      const options = values
+        .map((value) => String(value).trim())
+        .filter(isUsableFilterOptionValue)
+        .sort();
+
+      if (options.length > 0) {
+        results.push({
+          type,
+          label: FALLBACK_FILTER_LABELS[type] || type,
+          dbKey,
+          options,
+          values: options
+        });
+      }
+    }
 
     const tagOptions = (await DrawingModel.distinct("tagNames", {
       ...baseFilter,
