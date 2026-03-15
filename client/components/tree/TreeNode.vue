@@ -135,6 +135,7 @@
         :level="level + 1"
         :selected-id="selectedId"
         :active-filters="activeFilters"
+        :filter-selections="nodeFilterSelections"
         @select="emit('select', $event)"
         @add-child="emit('add-child', $event)"
         @delete="emit('delete', $event)"
@@ -158,6 +159,8 @@ const props = defineProps<{
   level: number;
   selectedId?: string;
   activeFilters?: Map<string, ProjectFilterSelections>;
+  // Resolved filter selections passed down from ancestor project node
+  filterSelections?: ProjectFilterSelections;
 }>();
 const { node, level, childrenByParentId } = toRefs(props);
 
@@ -182,10 +185,11 @@ const childNodes = computed(() => {
   return childrenByParentId.value.get(node.value.id) || [];
 });
 
-// Filter selections for this project (only relevant when node is a project)
+// Filter selections: for project node — read from activeFilters map by own ID
+// for all other nodes — inherit from parent via filterSelections prop
 const nodeFilterSelections = computed<ProjectFilterSelections | undefined>(() => {
-  if (node.value.type !== "project") return undefined;
-  return props.activeFilters?.get(node.value.id);
+  if (node.value.type === "project") return props.activeFilters?.get(node.value.id);
+  return props.filterSelections;
 });
 
 const hasActiveFilter = computed(() => {

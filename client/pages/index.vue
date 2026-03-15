@@ -21,19 +21,27 @@
         <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 sm:px-4 py-2 sm:py-3">
           <div class="flex min-w-0 items-center gap-2">
             <h3 class="text-sm sm:text-base font-semibold text-slate-900">Bản vẽ</h3>
-            <select
-              v-if="drawingVersions.length > 1"
-              v-model="activeDrawingId"
-              class="h-8 max-w-[190px] rounded-md border border-slate-200 bg-white px-2 text-[11px] text-slate-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-400/20 sm:h-9 sm:text-xs"
-              :disabled="loading"
-              @change="handleDrawingVersionChange"
-            >
-              <option v-for="version in drawingVersions" :key="version._id" :value="version._id">
-                Index {{ version.versionIndex }}{{ version.isLatestVersion ? " (Latest)" : "" }}
-              </option>
-            </select>
           </div>
           <div class="flex items-center gap-1.5 sm:gap-2">
+            <!-- Danh sách phiên bản A / B / C gần nút tải -->
+            <template v-if="drawingVersions.length > 1">
+              <div class="flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                <button
+                  v-for="v in drawingVersions"
+                  :key="v._id"
+                  class="flex h-7 min-w-[28px] items-center justify-center rounded px-1.5 text-xs font-bold transition-colors"
+                  :class="v._id === activeDrawingId
+                    ? 'bg-brand-600 text-white shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-200 hover:text-slate-800'"
+                  :title="`Phiên bản ${versionIndexToLetter(v.versionIndex)}${v.isLatestVersion ? ' (mới nhất)' : ''}`"
+                  :disabled="loading"
+                  @click="switchToVersion(v._id)"
+                >
+                  {{ versionIndexToLetter(v.versionIndex) }}
+                </button>
+              </div>
+              <div class="h-5 w-px bg-slate-200" />
+            </template>
             <!-- Nút tải PDF bản vẽ -->
             <button
               v-if="(drawing as any)?.fileType !== '3d'"
@@ -95,7 +103,7 @@
           >
             <option value="">Không so sánh</option>
             <option v-for="version in compareCandidates" :key="version._id" :value="version._id">
-              So sánh với Index {{ version.versionIndex }}
+              So sánh với phiên bản {{ versionIndexToLetter(version.versionIndex) }}
             </option>
           </select>
           <select
@@ -293,6 +301,28 @@ const compareOpacity = computed(() => compareOpacityPercent.value / 100);
 const compareCandidates = computed(() =>
   drawingVersions.value.filter((item) => item?._id && item._id !== activeDrawingId.value)
 );
+
+// Chuyển versionIndex số → chữ cái: 1→A, 2→B, 26→Z, 27→AA
+const versionIndexToLetter = (index: number): string => {
+  if (!index || index <= 0) return String(index);
+  const letters: string[] = [];
+  let n = index;
+  while (n > 0) {
+    n--;
+    letters.unshift(String.fromCharCode(65 + (n % 26)));
+    n = Math.floor(n / 26);
+  }
+  return letters.join("");
+};
+
+const switchToVersion = async (versionId: string) => {
+  if (versionId === activeDrawingId.value) return;
+  activeDrawingId.value = versionId;
+  if (compareDrawingId.value === versionId) compareDrawingId.value = "";
+  selectedTask.value = null;
+  placingPin.value = false;
+  await loadDrawingDataById(versionId);
+};
 
 // Pin placement
 const placingPin = ref(false);

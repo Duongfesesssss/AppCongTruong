@@ -40,14 +40,21 @@
 
           <div v-else class="space-y-4">
             <div v-for="field in filterFields" :key="field.type">
-              <label class="mb-1.5 block text-xs font-medium text-slate-700">{{ field.label }}</label>
+              <label
+                class="mb-1.5 block text-xs font-medium"
+                :class="field.options.length ? 'text-slate-700' : 'text-slate-400'"
+              >
+                {{ field.label }}
+                <span v-if="!field.options.length" class="ml-1 font-normal">(chưa có dữ liệu)</span>
+              </label>
               <Multiselect
                 v-model="selections[field.type]"
                 :options="field.options"
                 mode="tags"
                 :searchable="true"
                 :close-on-select="false"
-                :placeholder="`Chọn ${field.label.toLowerCase()}...`"
+                :disabled="!field.options.length"
+                :placeholder="field.options.length ? `Chọn ${field.label.toLowerCase()}...` : 'Chưa có dữ liệu'"
                 no-options-text="Không có dữ liệu"
                 no-results-text="Không tìm thấy"
               />

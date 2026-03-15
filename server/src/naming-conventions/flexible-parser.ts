@@ -89,16 +89,17 @@ export const parseFilenameWithConvention = (
     };
   }
 
-  // Kiểm tra số lượng segment — phải khớp đúng với số field đã định nghĩa
+  // Kiểm tra số lượng segment — báo lỗi nếu không khớp nhưng vẫn parse best-effort
   // (trường description là ngoại lệ: nó gom hết segment còn lại nên không cần đếm thêm)
   const hasDescriptionField = enabledFields.some((f) => f.type === "description");
   const requiredFieldCount = enabledFields.filter((f) => f.required).length;
   if (!hasDescriptionField && segments.length !== enabledFields.length) {
     errors.push(
-      `Tên file có ${segments.length} phần nhưng quy tắc định nghĩa ${enabledFields.length} trường. Phải đặt tên đúng cấu trúc.`
+      `Tên file có ${segments.length} phần nhưng quy tắc định nghĩa ${enabledFields.length} trường.`
     );
-    return { rawName: filename, fields: [], isValid: false, errors, warnings };
-  } else if (segments.length < requiredFieldCount) {
+    // Không return sớm — tiếp tục parse best-effort để trích xuất metadata có thể có
+  }
+  if (segments.length < requiredFieldCount) {
     errors.push(
       `File thiếu trường bắt buộc. Cần tối thiểu ${requiredFieldCount} trường, nhưng chỉ có ${segments.length} trường.`
     );

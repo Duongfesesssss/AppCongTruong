@@ -322,11 +322,13 @@ const handleFilter = (projectId: string) => {
   showProjectFilterModal.value = true;
 };
 
-const handleFilterApply = (selections: ProjectFilterSelections) => {
+const handleFilterApply = async (selections: ProjectFilterSelections) => {
   const updated = new Map(projectFilters.value);
   updated.set(filterTargetProjectId.value, selections);
   projectFilters.value = updated;
   showProjectFilterModal.value = false;
+  // Refresh cây để lấy tagNames mới nhất (backfill đã cập nhật DB khi filter-options được gọi)
+  await fetchTree();
 };
 
 const handleAddChild = (payload: { parentId: string; parentType: string; childType: string }) => {

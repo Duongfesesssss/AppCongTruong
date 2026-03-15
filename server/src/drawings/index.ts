@@ -24,6 +24,9 @@ import { DisciplineModel } from "../disciplines/discipline.model";
 import { validateIfcFile, validateIfcFilePath } from "./ifc-validator";
 import { linkDrawingsSchema, unlinkDrawingSchema } from "./drawing.schema";
 import { Types } from "mongoose";
+import { NamingConventionModel } from "../naming-conventions/naming-convention.model";
+import { parseFilenameWithProjectConvention, extractMetadataFromParsed } from "./naming-convention-helper";
+import { parseFilenameWithConvention } from "../naming-conventions/flexible-parser";
 
 const router = Router();
 
@@ -319,7 +322,7 @@ const resolveAutoScan = async ({
   ocrText?: string;
   projectId: string;
 }) => {
-  // Legacy parser là nguồn chính, không phụ thuộc naming convention.
+  // Legacy parser là nguồn chính
   const parsedFromPreferredName = preferredName ? parseDrawingFilename(preferredName) : null;
   if (parsedFromPreferredName) {
     return { parsed: parsedFromPreferredName, flexibleParsed: null, metadata: null, source: "manual" as const };
@@ -328,6 +331,13 @@ const resolveAutoScan = async ({
   const parsedFromFilename = parseDrawingFilename(originalName);
   if (parsedFromFilename) {
     return { parsed: parsedFromFilename, flexibleParsed: null, metadata: null, source: "filename" as const };
+  }
+
+  // Fallback: dùng flexible parser theo naming convention của project
+  const nameToTry = path.parse(preferredName || originalName).name || preferredName || originalName;
+  const flexibleParsed = await parseFilenameWithProjectConvention(nameToTry, projectId).catch(() => null);
+  if (flexibleParsed && flexibleParsed.fields.length > 0) {
+    return { parsed: null, flexibleParsed, metadata: null, source: "convention" as const };
   }
 
   const parsedFromOcr = ocrText ? parseDrawingMetadataFromText(ocrText) : null;
@@ -479,11 +489,13 @@ const hasMeaningfulParsedMetadata = (input?: Record<string, unknown>) => {
 };
 
 const backfillDrawingParsedMetadataForProject = async (projectId: string) => {
-  const drawings = await DrawingModel.find({
-    projectId: new Types.ObjectId(projectId)
-  })
-    .select("_id originalName name drawingCode parsedMetadata tagNames")
-    .lean();
+  const [drawings, convention] = await Promise.all([
+    DrawingModel.find({ projectId: new Types.ObjectId(projectId) })
+      .select("_id originalName name drawingCode parsedMetadata tagNames")
+      .lean(),
+    // Load convention 1 lần cho toàn bộ drawings — tránh N+1 queries
+    NamingConventionModel.findOne({ projectId: new Types.ObjectId(projectId) }).lean()
+  ]);
 
   if (!drawings.length) return;
 
@@ -493,15 +505,24 @@ const backfillDrawingParsedMetadataForProject = async (projectId: string) => {
     const sourceName = drawing.originalName || drawing.name || drawing.drawingCode;
     if (!sourceName) continue;
 
+    const updateSet: Record<string, unknown> = {};
+
+    // 1. Flexible parser theo naming convention (ưu tiên cao nhất, dùng convention đã load sẵn)
+    const nameForParsing = path.parse(sourceName).name || sourceName;
+    const flexibleParsed = convention
+      ? (() => { try { return parseFilenameWithConvention(nameForParsing, convention as any); } catch { return null; } })()
+      : await parseFilenameWithProjectConvention(nameForParsing, projectId).catch(() => null);
+    const flexibleTags = flexibleParsed?.fields.length ? buildTagNamesFromParsedFields(flexibleParsed.fields) : [];
+    const flexibleExtracted = flexibleParsed ? extractMetadataFromParsed(flexibleParsed) : undefined;
+    const flexibleMetadata = flexibleExtracted
+      ? normalizeParsedMetadataInput(flexibleExtracted as Record<string, string | undefined>)
+      : undefined;
+
+    // 2. Legacy parser (dự phòng cho các bản vẽ cũ)
     const legacyParsed = parseDrawingFilename(sourceName) || (drawing.drawingCode ? parseDrawingFilename(drawing.drawingCode) : null);
     const heuristicMetadata =
       extractHeuristicMetadataFromCode(drawing.drawingCode) ||
       extractHeuristicMetadataFromCode(drawing.originalName || drawing.name);
-
-    if (!legacyParsed && !heuristicMetadata) continue;
-
-    const updateSet: Record<string, unknown> = {};
-
     const metadataFromLegacy = normalizeParsedMetadataInput(
       legacyParsed
         ? {
@@ -517,8 +538,7 @@ const backfillDrawingParsedMetadataForProject = async (projectId: string) => {
         : undefined
     );
 
-    const metadata = mergeParsedMetadata(metadataFromLegacy, heuristicMetadata);
-    // Luôn cập nhật parsedMetadata (kể cả khi đã có) để đảm bảo giá trị được chuẩn hóa (uppercase)
+    const metadata = mergeParsedMetadata(flexibleMetadata, metadataFromLegacy, heuristicMetadata);
     if (metadata) {
       const existingMeta = JSON.stringify(drawing.parsedMetadata ?? {});
       const newMeta = JSON.stringify(metadata);
@@ -527,17 +547,16 @@ const backfillDrawingParsedMetadataForProject = async (projectId: string) => {
       }
     }
 
+    // Merge tags: flexible (convention fields) + legacy
     const legacyTags = legacyParsed?.tagNames ?? [];
-    const nextAutoTags = mergeTagNames(legacyTags);
-    if (nextAutoTags.length > 0) {
-      const mergedTags = mergeTagNames((drawing.tagNames as string[] | undefined) || [], nextAutoTags);
-      const existingTags = Array.from(new Set(((drawing.tagNames as string[] | undefined) || []).slice().sort()));
-      const nextTags = Array.from(new Set(mergedTags.slice().sort()));
-      if (JSON.stringify(existingTags) !== JSON.stringify(nextTags)) {
-        updateSet.tagNames = mergedTags;
-      }
+    const mergedTags = mergeTagNames(flexibleTags, legacyTags, (drawing.tagNames as string[] | undefined) || []);
+    const existingTags = Array.from(new Set(((drawing.tagNames as string[] | undefined) || []).slice().sort()));
+    const nextTags = Array.from(new Set(mergedTags.slice().sort()));
+    if (JSON.stringify(existingTags) !== JSON.stringify(nextTags)) {
+      updateSet.tagNames = mergedTags;
     }
 
+    if (!flexibleParsed && !legacyParsed && !heuristicMetadata) continue;
     if (Object.keys(updateSet).length === 0) continue;
 
     operations.push({
@@ -626,6 +645,10 @@ router.post(
       projectId: project!._id.toString()
     });
     const parsed = autoScan.parsed;
+    const flexibleParsed = autoScan.flexibleParsed;
+    // Tags và metadata từ convention-aware parser (bao gồm tất cả field types: date, index, ...)
+    const flexibleFieldTags = flexibleParsed ? buildTagNamesFromParsedFields(flexibleParsed.fields) : [];
+    const flexibleMetadata = flexibleParsed ? extractMetadataFromParsed(flexibleParsed) : undefined;
     const heuristicUploadMetadata =
       extractHeuristicMetadataFromCode(preferredDrawingName) ||
       extractHeuristicMetadataFromCode(req.file.originalname) ||
@@ -820,11 +843,12 @@ router.post(
     const mergedTags = mergeTagNames(
       parsed?.tagNames,
       conventionFieldTags,
+      flexibleFieldTags,
       [
         building ? `building:${building.code}` : undefined,
         floor ? `floor:${floor.code}` : undefined,
         discipline ? `discipline:${discipline.code}` : undefined,
-        !parsed ? "uncategorized" : undefined
+        !parsed && !flexibleParsed ? "uncategorized" : undefined
       ].filter((tag): tag is string => !!tag),
       tagNames
     );
@@ -866,9 +890,13 @@ router.post(
         })
       : undefined;
 
+    const normalizedFlexibleMetadata = flexibleMetadata
+      ? normalizeParsedMetadataInput(flexibleMetadata as Record<string, string | undefined>)
+      : undefined;
     const mergedCreationMetadata = mergeParsedMetadata(
       normalizedParsedMetadataInput,
       parsedMetadataFromLegacy,
+      normalizedFlexibleMetadata,
       heuristicUploadMetadata
     );
 
@@ -1180,92 +1208,68 @@ router.get(
     const hasAccess = userProjects.some((p) => p._id.toString() === projectId);
     if (!hasAccess) return sendSuccess(res, []);
 
-    // Backfill metadata cho các bản vẽ cũ chưa có parsedMetadata - chạy nền, không block response
-    backfillDrawingParsedMetadataForProject(projectId).catch(() => undefined);
+    // Backfill: đảm bảo tất cả drawings có đủ tagNames theo convention trước khi query filter
+    await backfillDrawingParsedMetadataForProject(projectId).catch(() => undefined);
 
-    // Không dùng naming convention để quyết định cột filter.
-    // Luôn dựa trên metadata thực tế để project mới/không setup vẫn có đủ cột.
-    const fields = DEFAULT_FILTER_FIELD_TYPES.map((type, index) => ({
-      type,
-      order: index,
-      label: FALLBACK_FILTER_LABELS[type] || type,
-      enabled: true
-    }));
+    // Lấy naming convention để xác định trường lọc theo đúng cấu hình người dùng đặt
+    const convention = await NamingConventionModel.findOne({
+      projectId: new Types.ObjectId(projectId)
+    }).lean();
+
+    // Chọn fields từ convention (enabled, có mapping db, bỏ description vì không hữu ích để lọc)
+    // Fallback về DEFAULT_FILTER_FIELD_TYPES nếu chưa thiết lập convention
+    let filterFields: Array<{ type: string; label: string }>;
+
+    if (convention && convention.fields.length > 0) {
+      filterFields = convention.fields
+        .filter((f) => f.enabled && f.type !== "description")
+        .sort((a, b) => a.order - b.order)
+        .map((f) => ({
+          type: f.type,
+          label: f.label || FALLBACK_FILTER_LABELS[f.type] || f.type
+        }));
+    } else {
+      filterFields = DEFAULT_FILTER_FIELD_TYPES.map((type) => ({
+        type,
+        label: FALLBACK_FILTER_LABELS[type] || type
+      }));
+    }
 
     const baseFilter = {
       projectId: new Types.ObjectId(projectId),
       isLatestVersion: { $ne: false }
     };
 
-    // Get distinct values for each enabled convention field
-    const results = await Promise.all(
-      fields.map(async (field) => {
-        const dbKey = FIELD_TYPE_TO_META_KEY[field.type];
-        if (!dbKey) return null;
+    // Lấy distinct values từ tagNames theo prefix của từng field type trong convention
+    // Cách này hoạt động với mọi field type (date, index, originator, ...) không cần DB mapping cứng
+    const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        const values: string[] = await DrawingModel.distinct(dbKey, {
+    const results = await Promise.all(
+      filterFields.map(async (field) => {
+        const fieldTypeNormalized = normalizeConventionFieldType(field.type).toLowerCase();
+        const tagPrefix = `${fieldTypeNormalized}:`;
+
+        const allMatchingTags: string[] = await DrawingModel.distinct("tagNames", {
           ...baseFilter,
-          [dbKey]: { $exists: true, $ne: "" }
+          tagNames: { $regex: `^${escapeRegex(tagPrefix)}` }
         });
 
-        const options = values
-          .map((value) => String(value).trim())
+        const options = allMatchingTags
+          .filter((tag) => tag.toLowerCase().startsWith(tagPrefix))
+          .map((tag) => tag.slice(tagPrefix.length).toUpperCase())
           .filter(isUsableFilterOptionValue)
           .sort();
+
         return {
-          type: field.type,
-          label: field.label || field.type,
-          dbKey,
+          type: fieldTypeNormalized,  // lowercase normalized → khớp với tagName format trong DB
+          label: field.label,
           options,
           values: options
         };
       })
     );
 
-    // Fallback: nếu convention chưa khai báo đủ field, vẫn sinh filter từ dữ liệu parsedMetadata hiện có
-    const existingTypes = new Set(results.filter((r) => !!r).map((r) => r!.type));
-    const existingDbKeys = new Set(results.filter((r) => !!r).map((r) => r!.dbKey));
-    const fallbackCandidates = Object.entries(FIELD_TYPE_TO_META_KEY)
-      .filter(([type, dbKey]) => type !== "description" && !existingTypes.has(type) && !existingDbKeys.has(dbKey));
-
-    const fallbackResults = await Promise.all(
-      fallbackCandidates.map(async ([type, dbKey]) => {
-        const values: string[] = await DrawingModel.distinct(dbKey, {
-          ...baseFilter,
-          [dbKey]: { $exists: true, $ne: "" }
-        });
-        const options = values
-          .map((value) => String(value).trim())
-          .filter(isUsableFilterOptionValue)
-          .sort();
-        return options.length > 0
-          ? { type, label: FALLBACK_FILTER_LABELS[type] || type, dbKey, options, values: options }
-          : null;
-      })
-    );
-    results.push(...fallbackResults.filter((r): r is NonNullable<typeof r> => r !== null));
-
-    const tagOptions = (await DrawingModel.distinct("tagNames", {
-      ...baseFilter,
-      tagNames: { $exists: true, $ne: [] }
-    })) as string[];
-
-    const normalizedTagOptions = tagOptions
-      .map((value) => String(value).trim())
-      .filter((value) => isUsableFilterOptionValue(value) && value.includes(":"))
-      .sort();
-    if (normalizedTagOptions.length > 0) {
-      results.push({
-        type: "tagNames",
-        label: "Tag name",
-        dbKey: "tagNames",
-        options: normalizedTagOptions,
-        values: normalizedTagOptions
-      });
-    }
-
-    // Return only fields that have actual data
-    return sendSuccess(res, results.filter((r) => r !== null && r.options.length > 0));
+    return sendSuccess(res, results);
   })
 );
 
