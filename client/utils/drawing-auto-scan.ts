@@ -1,3 +1,5 @@
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
 type ParsedDrawingToken = {
   projectCode: string;
   unitCode: string;
@@ -430,8 +432,7 @@ const getPdfJsLib = async () => {
   if (!pdfjsLibPromise) {
     pdfjsLibPromise = import("pdfjs-dist").then((lib) => {
       if (typeof window !== "undefined" && lib?.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
-        lib.GlobalWorkerOptions.workerSrc =
-          `https://cdn.jsdelivr.net/npm/pdfjs-dist@${lib.version}/build/pdf.worker.min.mjs`;
+        lib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
       }
       return lib;
     });

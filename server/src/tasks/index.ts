@@ -158,34 +158,34 @@ router.post(
         if (project) {
           const recipientUserIds = getProjectRecipientUserIds(project, req.user!.id);
           if (recipientUserIds.length > 0) {
-            await createAndPublishNotifications(
-              recipientUserIds.map((recipientUserId) => ({
-                recipientUserId,
-                actorUserId: req.user!.id,
-                type: "task_status_changed",
-                title: "Task đã thay đổi trạng thái",
-                message: `${task.pinName || task.pinCode}: ${getTaskStatusLabel(oldStatus)} -> ${getTaskStatusLabel(
-                  task.status
-                )}`,
-                data: {
-                  taskId: task._id.toString(),
-                  drawingId: task.drawingId.toString(),
-                  oldStatus,
-                  newStatus: task.status,
-                  deepLink: {
-                    drawingId: task.drawingId.toString(),
+            // Chạy song song: gửi notification + fetch user cho email
+            const [, recipients] = await Promise.all([
+              createAndPublishNotifications(
+                recipientUserIds.map((recipientUserId) => ({
+                  recipientUserId,
+                  actorUserId: req.user!.id,
+                  type: "task_status_changed",
+                  title: "Task đã thay đổi trạng thái",
+                  message: `${task.pinName || task.pinCode}: ${getTaskStatusLabel(oldStatus)} -> ${getTaskStatusLabel(
+                    task.status
+                  )}`,
+                  data: {
                     taskId: task._id.toString(),
-                    pinX: task.pinX,
-                    pinY: task.pinY,
-                    zoom: 1.8
+                    drawingId: task.drawingId.toString(),
+                    oldStatus,
+                    newStatus: task.status,
+                    deepLink: {
+                      drawingId: task.drawingId.toString(),
+                      taskId: task._id.toString(),
+                      pinX: task.pinX,
+                      pinY: task.pinY,
+                      zoom: 1.8
+                    }
                   }
-                }
-              }))
-            );
-
-            // Send email notifications for task status updates
-            // Fetch recipient user details for emails
-            const recipients = await UserModel.find({ _id: { $in: recipientUserIds } }).select("_id name email").lean();
+                }))
+              ),
+              UserModel.find({ _id: { $in: recipientUserIds } }).select("_id name email").lean()
+            ]);
 
             // Send emails in parallel without blocking the response
             Promise.all(
@@ -361,7 +361,7 @@ router.get(
       };
     }
 
-    const tasks = await TaskModel.find(filter).sort({ createdAt: -1 });
+    const tasks = await TaskModel.find(filter).sort({ createdAt: -1 }).lean();
     return sendSuccess(res, tasks);
   })
 );
@@ -390,11 +390,13 @@ router.get(
     const task = await TaskModel.findById(req.params.id);
     if (!task) throw errors.notFound("Task không tồn tại");
 
-    // Check ownership
-    const project = await ProjectModel.findById(task.projectId);
+    // Fetch project và drawing song song
+    const [project, drawing] = await Promise.all([
+      ProjectModel.findById(task.projectId),
+      DrawingModel.findById(task.drawingId)
+    ]);
     ensureProjectRole(project, req.user!.id, "technician", "Task không tồn tại hoặc không có quyền");
 
-    const drawing = await DrawingModel.findById(task.drawingId);
     return sendSuccess(res, {
       task,
       project: project!,
@@ -589,41 +591,36 @@ router.post(
       ? await TaskModel.countDocuments({ drawingId: sourceTask.drawingId, pinName: { $regex: `^${escapeRegExp(cloneBaseName)}(-\\d+)?$` } })
       : 0;
 
-    // Generate multiple clones
-    const clonedTasks = [];
-    for (let i = 0; i < count; i++) {
-      // Increment counter for each clone
-      const counter = await CounterModel.findOneAndUpdate(
-        { _id: project!._id.toString() },
-        { $inc: { seq: 1 } },
-        { new: true, upsert: true }
-      );
+    // Pre-increment counter một lần duy nhất cho tất cả clones
+    const counter = await CounterModel.findOneAndUpdate(
+      { _id: project!._id.toString() },
+      { $inc: { seq: count } },
+      { new: true, upsert: true }
+    );
+    const startSeq = counter.seq - count + 1;
 
-      const pinCode = formatPinCode(project!.code, buildingCode, floorCode, gewerkCode, counter.seq);
+    // Build tất cả task data trong memory, insertMany một lần
+    const taskDocs = Array.from({ length: count }, (_, i) => ({
+      projectId: sourceTask.projectId,
+      buildingId: sourceTask.buildingId,
+      floorId: sourceTask.floorId,
+      disciplineId: sourceTask.disciplineId,
+      drawingId: sourceTask.drawingId,
+      pinX: pinX !== undefined ? pinX : sourceTask.pinX,
+      pinY: pinY !== undefined ? pinY : sourceTask.pinY,
+      status: sourceTask.status,
+      category: sourceTask.category,
+      description: sourceTask.description,
+      roomName: sourceTask.roomName,
+      pinName: cloneBaseName ? `${cloneBaseName}-${existingNameCount + i}` : sourceTask.pinName,
+      gewerk: sourceTask.gewerk,
+      tagNames: [...sourceTask.tagNames],
+      notes: [...sourceTask.notes],
+      pinCode: formatPinCode(project!.code, buildingCode, floorCode, gewerkCode, startSeq + i),
+      createdBy: req.user!.id
+    }));
 
-      // Clone task fields: pinName, category, status, notes (NOT photos)
-      const clonedTask = await TaskModel.create({
-        projectId: sourceTask.projectId,
-        buildingId: sourceTask.buildingId,
-        floorId: sourceTask.floorId,
-        disciplineId: sourceTask.disciplineId,
-        drawingId: sourceTask.drawingId,
-        pinX: pinX !== undefined ? pinX : sourceTask.pinX,
-        pinY: pinY !== undefined ? pinY : sourceTask.pinY,
-        status: sourceTask.status,
-        category: sourceTask.category,
-        description: sourceTask.description,
-        roomName: sourceTask.roomName,
-        pinName: cloneBaseName ? `${cloneBaseName}-${existingNameCount + i}` : sourceTask.pinName,
-        gewerk: sourceTask.gewerk,
-        tagNames: [...sourceTask.tagNames],
-        notes: [...sourceTask.notes],
-        pinCode, // New unique code
-        createdBy: req.user!.id
-      });
-
-      clonedTasks.push(clonedTask);
-    }
+    const clonedTasks = await TaskModel.insertMany(taskDocs);
 
     return sendSuccess(res, {
       count: clonedTasks.length,

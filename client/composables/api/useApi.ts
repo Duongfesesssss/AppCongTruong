@@ -15,13 +15,21 @@ type CachedGetEntry<T> = {
 };
 
 const GET_CACHE_PREFIX = "api-get-cache-v1";
-const GET_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+// Cache 5 phút cho data động (project-tree, tasks, drawings)
+const GET_CACHE_TTL_MS = 1000 * 60 * 5;
+// Cache 24 giờ cho data tĩnh (keyword-library, naming-conventions)
+const GET_CACHE_TTL_STATIC_MS = 1000 * 60 * 60 * 24;
+
+const isStaticDataPath = (path: string) => {
+  return path.startsWith("/keyword-library") || path.startsWith("/naming-conventions");
+};
 
 const isCriticalRealtimeGetPath = (path: string) => {
   return (
     path.startsWith("/drawings/filter-options") ||
-    path.startsWith("/naming-conventions/") ||
-    path.startsWith("/drawings?")
+    path.startsWith("/drawings?") ||
+    path.startsWith("/project-tree") ||
+    path.startsWith("/tasks")
   );
 };
 
@@ -105,7 +113,8 @@ export const useApi = () => {
       const parsed = JSON.parse(raw) as CachedGetEntry<T>;
       if (!parsed || typeof parsed !== "object") return null;
       if (typeof parsed.cachedAt !== "number") return null;
-      if (Date.now() - parsed.cachedAt > GET_CACHE_TTL_MS) {
+      const ttl = isStaticDataPath(path) ? GET_CACHE_TTL_STATIC_MS : GET_CACHE_TTL_MS;
+      if (Date.now() - parsed.cachedAt > ttl) {
         localStorage.removeItem(getCacheKey(path));
         return null;
       }

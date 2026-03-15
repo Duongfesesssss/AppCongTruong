@@ -406,6 +406,7 @@ const token = useState<string | null>("auth-token", () => null);
 
 const task = ref<any>(null);
 const photos = ref<any[]>([]);
+const photoBlobUrls = ref<Record<string, string>>({});
 const loading = ref(false);
 const error = ref("");
 const uploadingPhoto = ref(false);
@@ -653,7 +654,11 @@ const loadTask = async () => {
     ]);
     task.value = taskData;
     revokeLocalPreviewUrls(photos.value);
+    // revoke old blob URLs
+    Object.values(photoBlobUrls.value).forEach(u => URL.revokeObjectURL(u));
+    photoBlobUrls.value = {};
     photos.value = photosData || [];
+    photos.value.forEach(p => fetchPhotoBlobUrl(p));
     syncEditFormFromTask();
     void fetchMentionCandidates();
   } catch (err) {
@@ -751,12 +756,25 @@ const monitorBulkUploadJob = async (jobId: string) => {
   }
 };
 
-const getPhotoUrl = (photo: any) => {
-  if (photo?._offlinePreviewUrl) {
-    return photo._offlinePreviewUrl;
+const fetchPhotoBlobUrl = async (photo: any) => {
+  if (!process.client || photo?._offlinePreviewUrl || !photo?._id) return;
+  if (photoBlobUrls.value[photo._id]) return;
+  try {
+    const url = `${config.public.apiBase}/photos/${photo._id}/file`;
+    const headers: Record<string, string> = {};
+    if (token.value) headers["Authorization"] = `Bearer ${token.value}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    photoBlobUrls.value[photo._id] = URL.createObjectURL(blob);
+  } catch {
+    // silently ignore, thumbnail stays blank
   }
-  const base = `${config.public.apiBase}/photos/${photo._id}/file`;
-  return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
+};
+
+const getPhotoUrl = (photo: any) => {
+  if (photo?._offlinePreviewUrl) return photo._offlinePreviewUrl;
+  return photoBlobUrls.value[photo?._id] || "";
 };
 
 const exportExcel = async () => {
@@ -774,23 +792,24 @@ const exportExcel = async () => {
     const url = new URL(`${baseUrl}/reports/export-excel`);
 
     // Export theo task hiện tại (tất cả photos của task)
-    // Có thể mở rộng thành filter theo project/date range sau
     if (task.value.projectId) {
       url.searchParams.append("projectId", task.value.projectId);
     }
 
-    // Add token for auth
-    if (token.value) {
-      url.searchParams.append("token", token.value);
-    }
+    const headers: Record<string, string> = {};
+    if (token.value) headers["Authorization"] = `Bearer ${token.value}`;
+    const res = await fetch(url.toString(), { headers });
+    if (!res.ok) throw new Error("Xuất Excel thất bại");
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
 
-    // Create download link
     const a = document.createElement("a");
-    a.href = url.toString();
+    a.href = blobUrl;
     a.download = `bao-cao-${task.value.pinCode || "do-dac"}-${Date.now()}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
 
     toast.push("Đang tải xuống báo cáo Excel...", "success");
   } catch (err) {
@@ -1005,6 +1024,8 @@ const categoryLabel = (category: string) => {
 
 onUnmounted(() => {
   revokeLocalPreviewUrls(photos.value);
+  Object.values(photoBlobUrls.value).forEach(u => URL.revokeObjectURL(u));
+  photoBlobUrls.value = {};
 });
 
 // Load on mount and when taskId changes

@@ -206,6 +206,7 @@
 </template>
 
 <script setup lang="ts">
+import { onUnmounted } from "vue";
 import { useAuth } from "~/composables/state/useAuth";
 import { useRealtime } from "~/composables/state/useRealtime";
 import { useSelectedNode } from "~/composables/state/useSelectedNode";
@@ -318,10 +319,24 @@ const canSend = computed(() => {
 const formatTime = (value: number | string) =>
   new Date(value).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
 
-const getSnapshotUrl = (messageId: string) => {
-  const base = `${config.public.apiBase}/chats/messages/${messageId}/snapshot`;
-  return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
+const snapshotBlobUrls = ref<Record<string, string>>({});
+
+const fetchSnapshotBlobUrl = async (messageId: string) => {
+  if (!process.client || snapshotBlobUrls.value[messageId]) return;
+  try {
+    const url = `${config.public.apiBase}/chats/messages/${messageId}/snapshot`;
+    const headers: Record<string, string> = {};
+    if (token.value) headers["Authorization"] = `Bearer ${token.value}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    snapshotBlobUrls.value[messageId] = URL.createObjectURL(blob);
+  } catch {
+    // silently ignore
+  }
 };
+
+const getSnapshotUrl = (messageId: string) => snapshotBlobUrls.value[messageId] || "";
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -429,6 +444,11 @@ watch(
 watch(() => messages.value.length, () => {
   if (!props.show) return;
   scrollToBottom();
+  messages.value.forEach((m: any) => { if (m.hasSnapshot) fetchSnapshotBlobUrl(m.id); });
+});
+
+onUnmounted(() => {
+  Object.values(snapshotBlobUrls.value).forEach(u => URL.revokeObjectURL(u as string));
 });
 
 // Mention helpers
@@ -493,7 +513,7 @@ const jumpToDeepLink = (deepLink?: { drawingId?: string; taskId?: string; pinX?:
   if (!deepLink?.drawingId) return;
   const matchedNode = getNodeById(deepLink.drawingId);
   if (matchedNode) {
-    selected.value = { id: matchedNode.id, name: matchedNode.name, type: matchedNode.type, projectId: matchedNode.projectId, projectRole: matchedNode.projectRole, canManageStructure: matchedNode.canManageStructure, drawingCode: matchedNode.drawingCode, versionIndex: matchedNode.versionIndex };
+    selected.value = { id: matchedNode.id, name: matchedNode.name, type: matchedNode.type, projectId: matchedNode.projectId, projectRole: matchedNode.projectRole, canManageStructure: matchedNode.canManageStructure, canManageDrawings: matchedNode.canManageDrawings, canManageTasks: matchedNode.canManageTasks, drawingCode: matchedNode.drawingCode, versionIndex: matchedNode.versionIndex };
   } else {
     selected.value = { id: deepLink.drawingId, name: "Drawing", type: "drawing" };
   }

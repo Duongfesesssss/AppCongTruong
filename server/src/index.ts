@@ -2,6 +2,7 @@
 import { createServer } from "node:http";
 
 import express from "express";
+import compression from "compression";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
@@ -41,6 +42,9 @@ import { initMailTransporter } from "./lib/mail";
 const app = express();
 const httpServer = createServer(app);
 app.set("trust proxy", 1);
+
+// Compress all responses (gzip/deflate)
+app.use(compression());
 
 const origins = config.corsOrigin
   .split(",")

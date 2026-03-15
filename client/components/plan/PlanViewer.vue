@@ -131,6 +131,7 @@
 </template>
 
 <script setup lang="ts">
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useDeepLinkFocus } from "~/composables/state/useDeepLinkFocus";
 
 type Drawing = { _id?: string; id?: string; name?: string } | null;
@@ -222,14 +223,12 @@ const token = useState<string | null>("auth-token", () => null);
 const fileUrl = computed(() => {
   if (!props.drawing) return "";
   const id = props.drawing._id || props.drawing.id;
-  const base = `${useRuntimeConfig().public.apiBase}/drawings/${id}/file`;
-  return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
+  return `${useRuntimeConfig().public.apiBase}/drawings/${id}/file`;
 });
 
 const compareFileUrl = computed(() => {
   if (!props.compareDrawingId) return "";
-  const base = `${useRuntimeConfig().public.apiBase}/drawings/${props.compareDrawingId}/file`;
-  return token.value ? `${base}?token=${encodeURIComponent(token.value)}` : base;
+  return `${useRuntimeConfig().public.apiBase}/drawings/${props.compareDrawingId}/file`;
 });
 
 const transformStyle = computed(() => ({
@@ -663,8 +662,7 @@ let viewportResizeObserver: ResizeObserver | null = null;
 const getPdfJsLib = async () => {
   if (!pdfjsLibPromise) {
     pdfjsLibPromise = import("pdfjs-dist").then((lib) => {
-      lib.GlobalWorkerOptions.workerSrc =
-        `https://cdn.jsdelivr.net/npm/pdfjs-dist@${lib.version}/build/pdf.worker.min.mjs`;
+      lib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
       return lib;
     });
   }
@@ -810,7 +808,11 @@ const loadPdfDocument = async () => {
   destroyCurrentPdfTask();
   await destroyCurrentPdfDoc();
 
-  currentPdfTask = pdfjsLib.getDocument(url);
+  currentPdfTask = pdfjsLib.getDocument({
+    url,
+    httpHeaders: token.value ? { Authorization: `Bearer ${token.value}` } : undefined,
+    withCredentials: true
+  });
   currentPdfDoc = await currentPdfTask.promise;
   currentPdfUrl = url;
 };
@@ -831,7 +833,11 @@ const loadComparePdfDocument = async () => {
   destroyComparePdfTask();
   await destroyComparePdfDoc();
 
-  comparePdfTask = pdfjsLib.getDocument(url);
+  comparePdfTask = pdfjsLib.getDocument({
+    url,
+    httpHeaders: token.value ? { Authorization: `Bearer ${token.value}` } : undefined,
+    withCredentials: true
+  });
   comparePdfDoc = await comparePdfTask.promise;
   comparePdfUrl = url;
 };

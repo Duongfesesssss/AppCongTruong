@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "node:stream";
 import { config } from "./config";
@@ -83,6 +83,69 @@ export const getS3SignedUrl = async (key: string, expiresIn: number = 3600): Pro
   const url = await getSignedUrl(client, command, { expiresIn });
 
   return url;
+};
+
+// In-memory TTL cache cho presigned URLs để tránh ký lại mỗi request
+const presignedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+/**
+ * Get signed URL với in-memory cache (tránh ký lại quá nhiều lần)
+ * Tự động đính kèm Content-Disposition và Content-Type vào URL
+ */
+export const getS3SignedUrlCached = async (
+  key: string,
+  options: { expiresIn?: number; contentDisposition?: string; contentType?: string } = {}
+): Promise<string> => {
+  const { expiresIn = 3600, contentDisposition, contentType } = options;
+  const cacheKey = `${key}::${contentDisposition ?? ""}::${contentType ?? ""}`;
+
+  const cached = presignedUrlCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 120_000) {
+    // Còn hợp lệ hơn 2 phút → dùng lại
+    return cached.url;
+  }
+
+  const client = getS3Client();
+  const command = new GetObjectCommand({
+    Bucket: config.aws.s3Bucket,
+    Key: key,
+    ...(contentDisposition && { ResponseContentDisposition: contentDisposition }),
+    ...(contentType && { ResponseContentType: contentType })
+  });
+
+  const url = await getSignedUrl(client, command, { expiresIn });
+  presignedUrlCache.set(cacheKey, { url, expiresAt: Date.now() + expiresIn * 1000 });
+
+  // Dọn cache cũ sau mỗi 100 entries
+  if (presignedUrlCache.size > 200) {
+    const now = Date.now();
+    for (const [k, v] of presignedUrlCache.entries()) {
+      if (v.expiresAt < now) presignedUrlCache.delete(k);
+    }
+  }
+
+  return url;
+};
+
+/**
+ * Find the first valid S3 key among candidates (HeadObject check, no download)
+ */
+export const findValidS3Key = async (candidateKeys: string[]): Promise<string> => {
+  const client = getS3Client();
+  for (const key of candidateKeys) {
+    try {
+      await client.send(new HeadObjectCommand({ Bucket: config.aws.s3Bucket, Key: key }));
+      return key;
+    } catch (err) {
+      const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+      const status = e.$metadata?.httpStatusCode ?? 0;
+      if (e.name === "NoSuchKey" || e.name === "NotFound" || status === 404 || status === 403) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("S3 object not found for any candidate key");
 };
 
 /**

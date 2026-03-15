@@ -9,6 +9,7 @@ import { sanitizeText, toCode } from "../lib/utils";
 import { objectIdSchema } from "../lib/validators";
 import { buildProjectAccessFilter, ensureProjectRole, getProjectRole } from "./project-access";
 import { ProjectModel, type ProjectMemberRole } from "./project.model";
+import { hasPermission } from "../permissions/permission-helpers";
 import { BuildingModel } from "../buildings/building.model";
 import { FloorModel } from "../floors/floor.model";
 import { DisciplineModel } from "../disciplines/discipline.model";
@@ -58,6 +59,7 @@ type FlatTreeNode = {
   projectRole: ProjectMemberRole;
   canManageStructure: boolean;
   canManageDrawings: boolean;
+  canManageTasks: boolean;
   drawingCode?: string;
   versionIndex?: number;
   metadata: FlatTreeNodeMetadata;
@@ -72,7 +74,7 @@ const createNode = (
   projectId: string,
   projectRole: ProjectMemberRole,
   sortIndex = 0,
-  extras: Partial<Pick<FlatTreeNode, "drawingCode" | "versionIndex" | "metadata">> = {}
+  extras: Partial<Pick<FlatTreeNode, "drawingCode" | "versionIndex" | "metadata" | "canManageStructure" | "canManageDrawings" | "canManageTasks">> = {}
 ): FlatTreeNode => ({
   id,
   name,
@@ -82,8 +84,9 @@ const createNode = (
   sortIndex,
   projectId,
   projectRole,
-  canManageStructure: projectRole === "admin",
-  canManageDrawings: projectRole === "admin" || projectRole === "technician",
+  canManageStructure: extras.canManageStructure ?? projectRole === "admin",
+  canManageDrawings: extras.canManageDrawings ?? (projectRole === "admin" || projectRole === "technician"),
+  canManageTasks: extras.canManageTasks ?? (projectRole === "admin" || projectRole === "technician"),
   ...extras,
   metadata: extras.metadata ?? {}
 });
@@ -193,13 +196,14 @@ router.get(
   "/",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const projects = await ProjectModel.find(buildProjectAccessFilter(req.user!.id))
+    const userId = req.user!.id;
+    const projects = await ProjectModel.find(buildProjectAccessFilter(userId))
       .sort({ sortIndex: 1, createdAt: 1 })
       .lean();
     const projectsWithRole = projects
       .map((project) => ({
         project,
-        role: getProjectRole(project, req.user!.id)
+        role: getProjectRole(project, userId)
       }))
       .filter((item): item is { project: (typeof projects)[number]; role: ProjectMemberRole } => !!item.role);
 
@@ -211,11 +215,15 @@ router.get(
     const [drawings, tasks] = await Promise.all([
       DrawingModel.find({
         projectId: { $in: projectIds },
-        $or: [{ isLatestVersion: true }, { isLatestVersion: { $exists: false } }]
+        isLatestVersion: { $ne: false }
       })
+        .select("name drawingCode versionIndex buildingId floorId disciplineId tagNames sortIndex projectId")
         .sort({ sortIndex: 1, createdAt: 1 })
         .lean(),
-      TaskModel.find({ projectId: { $in: projectIds } }).sort({ createdAt: 1 }).lean()
+      TaskModel.find({ projectId: { $in: projectIds } })
+        .select("pinName pinCode status category buildingId floorId disciplineId drawingId tagNames projectId")
+        .sort({ createdAt: 1 })
+        .lean()
     ]);
 
     const nodes: FlatTreeNode[] = [];
@@ -224,7 +232,18 @@ router.get(
 
     projectsWithRole.forEach(({ project, role }) => {
       const projectId = project._id.toString();
-      const node = createNode(projectId, project.name, "project", null, null, projectId, role, project.sortIndex ?? 0);
+      const canManageStructure = hasPermission(project as any, userId, "project.update_info");
+      const canManageDrawings =
+        hasPermission(project as any, userId, "drawings.upload") ||
+        hasPermission(project as any, userId, "drawings.manage");
+      const canManageTasks =
+        hasPermission(project as any, userId, "tasks.create") ||
+        hasPermission(project as any, userId, "tasks.manage");
+      const node = createNode(projectId, project.name, "project", null, null, projectId, role, project.sortIndex ?? 0, {
+        canManageStructure,
+        canManageDrawings,
+        canManageTasks
+      });
       projectMap.set(projectId, node);
       nodes.push(node);
     });

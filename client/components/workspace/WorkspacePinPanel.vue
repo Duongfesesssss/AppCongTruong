@@ -274,6 +274,8 @@ const goToPin = (pin: any) => {
       projectId: matchedNode.projectId,
       projectRole: matchedNode.projectRole,
       canManageStructure: matchedNode.canManageStructure,
+      canManageDrawings: matchedNode.canManageDrawings,
+      canManageTasks: matchedNode.canManageTasks,
       drawingCode: matchedNode.drawingCode,
       versionIndex: matchedNode.versionIndex
     };

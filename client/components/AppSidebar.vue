@@ -257,6 +257,8 @@ const handleSelect = (node: ProjectTreeNode) => {
     projectId: node.projectId,
     projectRole: node.projectRole,
     canManageStructure: node.canManageStructure,
+    canManageDrawings: node.canManageDrawings,
+    canManageTasks: node.canManageTasks,
     drawingCode: node.drawingCode,
     versionIndex: node.versionIndex
   } as SelectedNode;
@@ -284,6 +286,9 @@ const handleViewDrawing = (drawing: { _id: string; name: string; drawingCode: st
     type: "drawing",
     projectId: currentProjectId.value,
     projectRole: selected.value?.projectRole,
+    canManageStructure: selected.value?.canManageStructure,
+    canManageDrawings: selected.value?.canManageDrawings,
+    canManageTasks: selected.value?.canManageTasks,
     drawingCode: drawing.drawingCode,
     versionIndex: drawing.versionIndex
   } as SelectedNode;

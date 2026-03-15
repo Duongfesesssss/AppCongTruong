@@ -264,18 +264,22 @@ const downloadDrawing = async (drawing: Drawing) => {
   try {
     const config = useRuntimeConfig();
     const token = useState<string | null>("auth-token", () => null);
-    let url = `${config.public.apiBase}/drawings/${drawing._id}/file?download=1`;
-    if (token.value) {
-      url += `&token=${encodeURIComponent(token.value)}`;
-    }
+    const url = `${config.public.apiBase}/drawings/${drawing._id}/file?download=1`;
+    const headers: Record<string, string> = {};
+    if (token.value) headers["Authorization"] = `Bearer ${token.value}`;
 
-    // Create hidden link and trigger download
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error("Download failed");
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
     const link = document.createElement("a");
-    link.href = url;
+    link.href = blobUrl;
     link.download = `${drawing.drawingCode}.pdf`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
   } catch (err: any) {
     console.error("Error downloading drawing:", err);
     alert("Không thể tải bản vẽ");

@@ -42,6 +42,8 @@ services:
       STORAGE_TYPE: ${STORAGE_TYPE:-local}
     volumes:
       - server_uploads:/app/uploads
+    mem_limit: 1g
+    cpus: '1.5'
     # depends_on:
     #   - mongodb  # Removed since using MongoDB Atlas
     networks:
@@ -59,6 +61,8 @@ services:
     environment:
       NODE_ENV: production
       NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE}
+    mem_limit: 512m
+    cpus: '0.5'
     depends_on:
       - server
     networks:

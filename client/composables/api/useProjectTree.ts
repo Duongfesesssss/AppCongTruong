@@ -25,6 +25,7 @@ export type ProjectTreeNode = {
   projectRole: ProjectRole;
   canManageStructure: boolean;
   canManageDrawings: boolean;
+  canManageTasks: boolean;
   drawingCode?: string;
   versionIndex?: number;
   metadata: ProjectTreeNodeMetadata;
@@ -42,7 +43,8 @@ type LegacyProjectTreeNode = {
   projectId: string;
   projectRole: ProjectRole;
   canManageStructure: boolean;
-  canManageDrawings: boolean;
+  canManageDrawings?: boolean;
+  canManageTasks?: boolean;
   drawingCode?: string;
   versionIndex?: number;
   children?: LegacyProjectTreeNode[];
@@ -89,6 +91,8 @@ const normalizeTreePayload = (payload: unknown): ProjectTreeResponse => {
       projectId: node.projectId,
       projectRole: node.projectRole,
       canManageStructure: node.canManageStructure,
+      canManageDrawings: node.canManageDrawings ?? false,
+      canManageTasks: node.canManageTasks ?? false,
       drawingCode: node.drawingCode,
       versionIndex: node.versionIndex,
       metadata: {}

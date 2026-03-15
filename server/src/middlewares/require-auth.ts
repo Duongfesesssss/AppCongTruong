@@ -29,7 +29,12 @@ export const requireAuth = (req: Request, _res: Response, next: NextFunction) =>
     }
   }
 
-  // 2. Fallback: query parameter (cho <object>, <img> tags khong gui duoc header)
+  // 2. X-Authenticator header
+  if (!token && typeof req.headers["x-authenticator"] === "string") {
+    token = req.headers["x-authenticator"];
+  }
+
+  // 3. Fallback: query parameter (cho <object>, <img> tags khong gui duoc header)
   if (!token && typeof req.query.token === "string") {
     token = req.query.token;
   }

@@ -286,8 +286,7 @@ const pendingTaskSelectionId = ref<string>("");
 const loading = ref(false);
 const error = ref("");
 const canManageTasks = computed(() => {
-  const role = selected.value?.projectRole;
-  return role === "admin" || role === "technician";
+  return selected.value?.canManageTasks ?? false;
 });
 const isProjectAdmin = computed(() => selected.value?.projectRole === "admin");
 const compareOpacity = computed(() => compareOpacityPercent.value / 100);

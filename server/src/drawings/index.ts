@@ -17,7 +17,7 @@ import { config } from "../lib/config";
 import { uploadLimiter } from "../middlewares/rate-limit";
 import { sanitizeText } from "../lib/utils";
 import { ZoneModel } from "../zones/zone.model";
-import { deleteFromS3, getS3Stream } from "../lib/s3";
+import { deleteFromS3, getS3SignedUrlCached, findValidS3Key } from "../lib/s3";
 import { BuildingModel } from "../buildings/building.model";
 import { FloorModel } from "../floors/floor.model";
 import { DisciplineModel } from "../disciplines/discipline.model";
@@ -57,37 +57,17 @@ const getLocalDrawingPath = (storageKey: string) => {
   return path.join(process.cwd(), "server", "uploads", "drawings", safeKey);
 };
 
-const isS3KeyNotFoundError = (err: unknown) => {
-  const value = err as { name?: string; message?: string };
-  const name = value?.name ?? "";
-  const message = value?.message ?? "";
-  return (
-    name === "NoSuchKey" ||
-    name === "NotFound" ||
-    message.includes("NoSuchKey") ||
-    message.includes("NotFound") ||
-    message.includes("specified key does not exist")
-  );
-};
-
-const getDrawingS3StreamWithFallback = async (storageKey: string) => {
+const getDrawingS3SignedUrlWithFallback = async (
+  storageKey: string,
+  options: Parameters<typeof getS3SignedUrlCached>[1] = {}
+): Promise<string> => {
   const safeKey = path.basename(storageKey);
   const candidateKeys = storageKey.startsWith("drawings/")
     ? [storageKey, safeKey]
     : [storageKey, `drawings/${safeKey}`];
 
-  for (const key of candidateKeys) {
-    try {
-      return await getS3Stream(key);
-    } catch (err) {
-      if (isS3KeyNotFoundError(err)) {
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  throw errors.notFound("File khong ton tai");
+  const validKey = await findValidS3Key(candidateKeys);
+  return getS3SignedUrlCached(validKey, options);
 };
 
 const getNextSortIndex = async (model: any, filter: Record<string, unknown>) => {
@@ -1126,14 +1106,16 @@ router.get(
     }
 
     if (!includeVersions) {
-      filter.$or = [{ isLatestVersion: true }, { isLatestVersion: { $exists: false } }];
+      filter.isLatestVersion = { $ne: false };
     }
 
-    const drawings = await DrawingModel.find(filter).sort({
-      sortIndex: 1,
-      versionIndex: -1,
-      createdAt: -1
-    });
+    const drawings = await DrawingModel.find(filter)
+      .sort({
+        sortIndex: 1,
+        versionIndex: -1,
+        createdAt: -1
+      })
+      .lean();
     return sendSuccess(res, drawings);
   })
 );
@@ -1198,8 +1180,8 @@ router.get(
     const hasAccess = userProjects.some((p) => p._id.toString() === projectId);
     if (!hasAccess) return sendSuccess(res, []);
 
-    // Backfill metadata cho các bản vẽ cũ chưa có parsedMetadata để bộ lọc dùng được ngay.
-    await backfillDrawingParsedMetadataForProject(projectId);
+    // Backfill metadata cho các bản vẽ cũ chưa có parsedMetadata - chạy nền, không block response
+    backfillDrawingParsedMetadataForProject(projectId).catch(() => undefined);
 
     // Không dùng naming convention để quyết định cột filter.
     // Luôn dựa trên metadata thực tế để project mới/không setup vẫn có đủ cột.
@@ -1212,7 +1194,7 @@ router.get(
 
     const baseFilter = {
       projectId: new Types.ObjectId(projectId),
-      $or: [{ isLatestVersion: true }, { isLatestVersion: { $exists: false } }]
+      isLatestVersion: { $ne: false }
     };
 
     // Get distinct values for each enabled convention field
@@ -1246,27 +1228,22 @@ router.get(
     const fallbackCandidates = Object.entries(FIELD_TYPE_TO_META_KEY)
       .filter(([type, dbKey]) => type !== "description" && !existingTypes.has(type) && !existingDbKeys.has(dbKey));
 
-    for (const [type, dbKey] of fallbackCandidates) {
-      const values: string[] = await DrawingModel.distinct(dbKey, {
-        ...baseFilter,
-        [dbKey]: { $exists: true, $ne: "" }
-      });
-
-      const options = values
-        .map((value) => String(value).trim())
-        .filter(isUsableFilterOptionValue)
-        .sort();
-
-      if (options.length > 0) {
-        results.push({
-          type,
-          label: FALLBACK_FILTER_LABELS[type] || type,
-          dbKey,
-          options,
-          values: options
+    const fallbackResults = await Promise.all(
+      fallbackCandidates.map(async ([type, dbKey]) => {
+        const values: string[] = await DrawingModel.distinct(dbKey, {
+          ...baseFilter,
+          [dbKey]: { $exists: true, $ne: "" }
         });
-      }
-    }
+        const options = values
+          .map((value) => String(value).trim())
+          .filter(isUsableFilterOptionValue)
+          .sort();
+        return options.length > 0
+          ? { type, label: FALLBACK_FILTER_LABELS[type] || type, dbKey, options, values: options }
+          : null;
+      })
+    );
+    results.push(...fallbackResults.filter((r): r is NonNullable<typeof r> => r !== null));
 
     const tagOptions = (await DrawingModel.distinct("tagNames", {
       ...baseFilter,
@@ -1362,7 +1339,6 @@ router.get(
       drawing.mimeType === "model/ifc" ||
       drawing.mimeType === "text/ifc";
     const contentType = isIfcFile ? "application/ifc" : drawing.mimeType;
-    res.setHeader("Content-Type", contentType);
 
     // Build standardized filename for download
     const safeName = path.basename(drawing.originalName || drawing.storageKey);
@@ -1373,13 +1349,18 @@ router.get(
       ? buildStandardizedDrawingFileName(drawing.drawingCode, drawing.mimeType, safeName)
       : safeName;
 
-    res.setHeader("Content-Disposition", `${isDownload ? "attachment" : "inline"}; filename="${downloadFilename}"`);
-    res.setHeader("Content-Length", String(drawing.size));
-
     if (config.storageType === "s3") {
-      const stream = await getDrawingS3StreamWithFallback(drawing.storageKey);
-      stream.pipe(res);
+      const signedUrl = await getDrawingS3SignedUrlWithFallback(drawing.storageKey, {
+        contentDisposition: `${isDownload ? "attachment" : "inline"}; filename="${downloadFilename}"`,
+        contentType
+      });
+      res.setHeader("Cache-Control", "private, max-age=600");
+      return res.redirect(302, signedUrl);
     } else {
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `${isDownload ? "attachment" : "inline"}; filename="${downloadFilename}"`);
+      res.setHeader("Content-Length", String(drawing.size));
+
       const filePath = getLocalDrawingPath(drawing.storageKey);
       if (!fs.existsSync(filePath)) throw errors.notFound("File khong ton tai");
 

@@ -68,4 +68,9 @@ taskSchema.index({ category: 1 });
 taskSchema.index({ drawingId: 1, tagNames: 1 });
 taskSchema.index({ projectId: 1, tagNames: 1 });
 
+// Compound indexes cho các query pattern phổ biến
+taskSchema.index({ projectId: 1, drawingId: 1, createdAt: -1 });
+taskSchema.index({ projectId: 1, status: 1, createdAt: -1 });
+taskSchema.index({ projectId: 1, category: 1, createdAt: -1 });
+
 export const TaskModel = mongoose.model<TaskDocument>("Task", taskSchema);
