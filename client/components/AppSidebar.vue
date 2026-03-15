@@ -89,12 +89,14 @@
         :node-map="nodeMap"
         :children-by-parent-id="childrenByParentId"
         :selected-id="selected?.id"
+        :active-filters="projectFilters"
         @select="handleSelect"
         @add-child="handleAddChild"
         @delete="handleDelete"
         @rename="handleRename"
         @reorder="handleReorder"
         @duplicate="handleDuplicate"
+        @filter="handleFilter"
       />
     </div>
 
@@ -144,6 +146,16 @@
       @updated="handlePermissionSettingsUpdated"
     />
 
+    <!-- Project Filter Modal -->
+    <ProjectFilterModal
+      :show="showProjectFilterModal"
+      :project-id="filterTargetProjectId"
+      :project-name="filterTargetProjectName"
+      :initial-selections="projectFilters.get(filterTargetProjectId)"
+      @close="showProjectFilterModal = false"
+      @apply="handleFilterApply"
+    />
+
     <!-- Drawing List / Filter Modal -->
     <Teleport to="body">
       <div
@@ -185,6 +197,7 @@ import { useApi } from "~/composables/api/useApi";
 import { useToast } from "~/composables/state/useToast";
 import PermissionSettingsModal from "~/components/PermissionSettingsModal.vue";
 import DrawingListPanel from "~/components/DrawingListPanel.vue";
+import ProjectFilterModal, { type ProjectFilterSelections } from "~/components/ProjectFilterModal.vue";
 
 const emit = defineEmits<{
   navigate: [];
@@ -206,6 +219,12 @@ const deleteTarget = ref<{ nodeId: string; nodeType: string; nodeName: string } 
 const showMembersModal = ref(false);
 const showPermissionSettingsModal = ref(false);
 const showDrawingListModal = ref(false);
+
+// Project filter state
+const projectFilters = ref<Map<string, ProjectFilterSelections>>(new Map());
+const showProjectFilterModal = ref(false);
+const filterTargetProjectId = ref("");
+const filterTargetProjectName = ref("");
 
 const allProjects = computed(() =>
   rootIds.value
@@ -294,6 +313,20 @@ const handleViewDrawing = (drawing: { _id: string; name: string; drawingCode: st
   } as SelectedNode;
   showDrawingListModal.value = false;
   emit("navigate");
+};
+
+const handleFilter = (projectId: string) => {
+  const projectNode = getNodeById(projectId);
+  filterTargetProjectId.value = projectId;
+  filterTargetProjectName.value = projectNode?.name ?? "";
+  showProjectFilterModal.value = true;
+};
+
+const handleFilterApply = (selections: ProjectFilterSelections) => {
+  const updated = new Map(projectFilters.value);
+  updated.set(filterTargetProjectId.value, selections);
+  projectFilters.value = updated;
+  showProjectFilterModal.value = false;
 };
 
 const handleAddChild = (payload: { parentId: string; parentType: string; childType: string }) => {

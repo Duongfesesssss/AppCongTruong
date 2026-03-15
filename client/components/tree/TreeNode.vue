@@ -44,6 +44,24 @@
         <span class="font-medium">{{ node.name }}</span>
       </button>
 
+      <!-- Filter icon — chỉ hiển thị ở project node -->
+      <button
+        v-if="node.type === 'project'"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-slate-200"
+        :class="hasActiveFilter ? 'text-brand-600' : 'text-slate-400 opacity-0 group-hover:opacity-100'"
+        :title="hasActiveFilter ? 'Đang lọc — bấm để chỉnh' : 'Lọc bản vẽ'"
+        @click.stop="emit('filter', node.id)"
+      >
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+          />
+        </svg>
+      </button>
+
       <div v-if="hasMenuActions" ref="menuRef" class="relative shrink-0">
         <button
           class="flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-200 hover:text-slate-700"
@@ -110,18 +128,20 @@
 
     <div v-if="hasChildren && expanded && node.type !== 'drawing'" class="mt-0.5">
       <TreeNode
-        v-for="child in childNodes"
+        v-for="child in visibleChildNodes"
         :key="child.id"
         :node="child"
         :children-by-parent-id="childrenByParentId"
         :level="level + 1"
         :selected-id="selectedId"
+        :active-filters="activeFilters"
         @select="emit('select', $event)"
         @add-child="emit('add-child', $event)"
         @delete="emit('delete', $event)"
         @rename="emit('rename', $event)"
         @reorder="emit('reorder', $event)"
         @duplicate="emit('duplicate', $event)"
+        @filter="emit('filter', $event)"
       />
     </div>
   </div>
@@ -130,11 +150,14 @@
 <script setup lang="ts">
 import type { ProjectTreeNode } from "~/composables/api/useProjectTree";
 
+import type { ProjectFilterSelections } from "~/components/ProjectFilterModal.vue";
+
 const props = defineProps<{
   node: ProjectTreeNode;
   childrenByParentId: Map<string, ProjectTreeNode[]>;
   level: number;
   selectedId?: string;
+  activeFilters?: Map<string, ProjectFilterSelections>;
 }>();
 const { node, level, childrenByParentId } = toRefs(props);
 
@@ -145,6 +168,7 @@ const emit = defineEmits<{
   (e: "rename", payload: { nodeId: string; nodeType: string; newName: string }): void;
   (e: "reorder", payload: { nodeId: string; nodeType: string; direction: "up" | "down" }): void;
   (e: "duplicate", payload: { nodeId: string; nodeType: string }): void;
+  (e: "filter", projectId: string): void;
 }>();
 
 const expanded = ref(true);
@@ -156,6 +180,38 @@ const menuRef = ref<HTMLElement | null>(null);
 
 const childNodes = computed(() => {
   return childrenByParentId.value.get(node.value.id) || [];
+});
+
+// Filter selections for this project (only relevant when node is a project)
+const nodeFilterSelections = computed<ProjectFilterSelections | undefined>(() => {
+  if (node.value.type !== "project") return undefined;
+  return props.activeFilters?.get(node.value.id);
+});
+
+const hasActiveFilter = computed(() => {
+  const sel = nodeFilterSelections.value;
+  if (!sel) return false;
+  return Object.values(sel).some((v) => v.length > 0);
+});
+
+// Drawings are filtered when this is a project node with active filters
+const visibleChildNodes = computed(() => {
+  const children = childNodes.value;
+  const sel = nodeFilterSelections.value;
+  if (!sel || !Object.values(sel).some((v) => v.length > 0)) return children;
+
+  return children.filter((child) => {
+    if (child.type !== "drawing") return true;
+    const tagNames = child.metadata.tagNames ?? [];
+    for (const [fieldType, values] of Object.entries(sel)) {
+      if (!values.length) continue;
+      const hasMatch = values.some((val) =>
+        tagNames.some((tag) => tag.toLowerCase() === `${fieldType}:${val.toLowerCase()}`)
+      );
+      if (!hasMatch) return false;
+    }
+    return true;
+  });
 });
 
 const hasChildren = computed(() => {
