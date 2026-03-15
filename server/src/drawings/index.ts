@@ -1312,6 +1312,46 @@ router.get(
   })
 );
 
+// Returns a pre-signed S3 URL so the client can fetch the PDF directly from S3
+// (avoids server-proxied range requests for each pdf.js page load)
+router.get(
+  "/:id/signed-url",
+  requireAuth,
+  validate(drawingIdSchema),
+  asyncHandler(async (req, res) => {
+    const drawing = await DrawingModel.findById(req.params.id);
+    if (!drawing) throw errors.notFound("Drawing khong ton tai");
+
+    ensureProjectRole(
+      await ProjectModel.findById(drawing.projectId),
+      req.user!.id,
+      "technician",
+      "Drawing khong ton tai hoac khong co quyen"
+    );
+
+    if (config.storageType !== "s3") {
+      return sendSuccess(res, { url: null });
+    }
+
+    const safeName = path.basename(drawing.originalName || drawing.storageKey);
+    const isIfcFile =
+      drawing.fileType === "3d" ||
+      (drawing.originalName || "").toLowerCase().endsWith(".ifc") ||
+      drawing.mimeType === "application/x-step" ||
+      drawing.mimeType === "application/ifc" ||
+      drawing.mimeType === "model/ifc" ||
+      drawing.mimeType === "text/ifc";
+    const contentType = isIfcFile ? "application/ifc" : drawing.mimeType;
+
+    const signedUrl = await getDrawingS3SignedUrlWithFallback(drawing.storageKey, {
+      contentDisposition: `inline; filename="${safeName}"`,
+      contentType
+    });
+
+    return sendSuccess(res, { url: signedUrl });
+  })
+);
+
 router.get(
   "/:id/file",
   requireAuth,

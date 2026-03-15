@@ -231,6 +231,7 @@ const compareFileUrl = computed(() => {
   return `${useRuntimeConfig().public.apiBase}/drawings/${props.compareDrawingId}/file`;
 });
 
+
 const transformStyle = computed(() => ({
   transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom.value})`,
   transformOrigin: "top left"
@@ -791,6 +792,26 @@ const hideCompareCanvas = () => {
   compareCanvasEl.style.display = "none";
 };
 
+// Fetch a pre-signed S3 URL so pdf.js can load the PDF directly from S3
+// (skips per-range-request server auth redirect, dramatically reduces load time)
+const fetchDirectPdfUrl = async (drawingId: string): Promise<string | null> => {
+  if (!token.value) return null;
+  // Derive apiBase from existing fileUrl (avoids useRuntimeConfig in async context)
+  const anyUrl = fileUrl.value || compareFileUrl.value;
+  if (!anyUrl) return null;
+  const base = anyUrl.replace(/\/drawings\/.*/, "");
+  try {
+    const res = await fetch(`${base}/drawings/${drawingId}/signed-url`, {
+      headers: { Authorization: `Bearer ${token.value}` }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.data?.url ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const loadPdfDocument = async () => {
   if (!process.client) return;
   const url = fileUrl.value;
@@ -808,11 +829,14 @@ const loadPdfDocument = async () => {
   destroyCurrentPdfTask();
   await destroyCurrentPdfDoc();
 
-  currentPdfTask = pdfjsLib.getDocument({
-    url,
-    httpHeaders: token.value ? { Authorization: `Bearer ${token.value}` } : undefined,
-    withCredentials: true
-  });
+  const drawingId = props.drawing?._id || (props.drawing as any)?.id;
+  const directUrl = drawingId ? await fetchDirectPdfUrl(drawingId) : null;
+
+  currentPdfTask = pdfjsLib.getDocument(
+    directUrl
+      ? { url: directUrl }
+      : { url, httpHeaders: token.value ? { Authorization: `Bearer ${token.value}` } : undefined, withCredentials: true }
+  );
   currentPdfDoc = await currentPdfTask.promise;
   currentPdfUrl = url;
 };
@@ -833,11 +857,13 @@ const loadComparePdfDocument = async () => {
   destroyComparePdfTask();
   await destroyComparePdfDoc();
 
-  comparePdfTask = pdfjsLib.getDocument({
-    url,
-    httpHeaders: token.value ? { Authorization: `Bearer ${token.value}` } : undefined,
-    withCredentials: true
-  });
+  const directUrl = props.compareDrawingId ? await fetchDirectPdfUrl(props.compareDrawingId) : null;
+
+  comparePdfTask = pdfjsLib.getDocument(
+    directUrl
+      ? { url: directUrl }
+      : { url, httpHeaders: token.value ? { Authorization: `Bearer ${token.value}` } : undefined, withCredentials: true }
+  );
   comparePdfDoc = await comparePdfTask.promise;
   comparePdfUrl = url;
 };
